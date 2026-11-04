@@ -166,6 +166,24 @@ L'interface ne calcule aucune décision : elle affiche des snapshots et transmet
 
 Fermer la fenêtre la masque seulement : le moteur continue derrière l'icône de la barre système.
 
+### Niveaux d'effort
+
+`live.Effort` (`internal/live/effort.go`) a cinq niveaux, comme `/effort` dans Claude Code : `low`, `medium`, `high` (par défaut), `xhigh`, `max`. Chaque niveau donne des `EffortParams` :
+
+| Niveau | GOMAXPROCS | Snapshots | Réévaluation complète | Échantillonnage des brackets | nice |
+|---|---|---|---|---|---|
+| low | 1 | 1/s | 30 min | 1 fenêtre sur 8 | +10 |
+| medium | 2 | 2/s | 15 min | 1 sur 4 | +5 |
+| high | max(2, NumCPU/2) | 4/s | 5 min | 1 sur 2 | 0 |
+| xhigh | NumCPU | 4/s | 2 min | toutes | 0 |
+| max | NumCPU | 8/s | 1 min | toutes | 0 |
+
+- **Ce qui ne change jamais** : chaque bougie de 1 s est lue, les stops et la durée maximale sont vérifiés à chaque mise à jour de prix. Le niveau ne change pas les décisions prises sur une bougie, seulement la fréquence du travail coûteux.
+- **Moteur** : `Engine.SetPace(Pace{SnapshotEvery, ReevaluateEvery})`, une commande de plus. Le ticker des snapshots est réinitialisé. La prochaine réévaluation garde le temps déjà attendu. Un champ nul garde la valeur courante.
+- **Session** : `SetEffort` enregistre le niveau dans `settings.json`, applique `runtime.GOMAXPROCS` (qui borne aussi le sémaphore de `app.Evaluate`), la priorité système, puis `SetPace`, sans redémarrer le moteur. La démo garde la période de réévaluation de sa config.
+- **Priorité système** (`cmd/rar-desktop/priority_*.go`) : `setpriority` sur chaque thread (`/proc/self/task`) sous Linux, sur le processus sous macOS et BSD, `SetPriorityClass` (*below normal*, jamais *idle*) sous Windows. Revenir à une priorité normale demande des droits sous Unix : la session le signale, et cela s'applique au prochain lancement.
+- **Interface** : la commande `effort` de l'invite (`effort` ouvre le sélecteur, `effort low` fixe le niveau), un sélecteur à cinq crans (←/→, Entrée, Échap) et un indicateur à cinq barres dans la barre du haut.
+
 Au premier lancement, les fichiers sont créés à partir des exemples embarqués (`assets.go`). L'ancienne config replay est mise de côté (`config.replay-old.json`), avec son état. Le replay hors-ligne reste disponible avec `--demo`.
 
 Le CLI `rar` reste sans CGO. Seul le binaire de bureau en dépend.

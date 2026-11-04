@@ -10,6 +10,7 @@ import (
 
 	rar "github.com/IlyasFounas/route_after_route/internal/app"
 	"github.com/IlyasFounas/route_after_route/internal/gui"
+	"github.com/IlyasFounas/route_after_route/internal/live"
 	"github.com/IlyasFounas/route_after_route/internal/loop"
 	"github.com/IlyasFounas/route_after_route/internal/market"
 	_ "github.com/IlyasFounas/route_after_route/internal/market/binance"
@@ -93,7 +94,7 @@ func TestEngineConfigWatchesEachFavorite(t *testing.T) {
 	cfg := rar.DefaultConfig()
 	s := &session{cfg: cfg, settings: gui.Settings{Pair: "SOLUSDT", Favorites: []string{"SOLUSDT", "BTCUSDT", "ETHUSDT"}}}
 	got := s.engineConfig()
-	if len(got.Markets) != 3 || got.Period.Lookback.Duration != liveLookback || got.ReevaluateEvery.Duration != liveReevaluate {
+	if len(got.Markets) != 3 || got.Period.Lookback.Duration != liveLookback || got.ReevaluateEvery.Duration != live.DefaultEffort.Params().ReevaluateEvery {
 		t.Fatalf("%+v", got)
 	}
 	ms, err := got.OpenMarkets()

@@ -10,6 +10,8 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+
+	"github.com/IlyasFounas/route_after_route/internal/live"
 )
 
 // screen is what the window shows.
@@ -21,12 +23,13 @@ const (
 	screenHistory               // the closed trades
 )
 
-// Command is a word typed at the home prompt.
+// Command is a word typed at the home prompt, maybe followed by arguments
+// ("effort low").
 type Command struct {
 	Name    string
 	Aliases []string
 	Help    string
-	open    func(u *UI)
+	open    func(u *UI, args []string)
 }
 
 // Commands are the home prompt's words, in the order they are suggested.
@@ -34,16 +37,43 @@ type Command struct {
 func Commands() []Command {
 	return []Command{
 		{Name: "trading", Aliases: []string{"trade", "algo"}, Help: "the algorithm, live, on all your cryptos",
-			open: func(u *UI) { u.show(screenTrading) }},
+			open: func(u *UI, _ []string) { u.show(screenTrading) }},
 		{Name: "historic", Aliases: []string{"history"}, Help: "every closed trade, gained or lost",
-			open: func(u *UI) { u.show(screenHistory) }},
+			open: func(u *UI, _ []string) { u.show(screenHistory) }},
+		{Name: "effort", Aliases: []string{"perf"}, Help: "how much of your computer the algorithm uses (" + live.EffortNames() + ")",
+			open: openEffort},
 	}
+}
+
+// openEffort is "effort" (the selector) or "effort <level>" (set directly).
+func openEffort(u *UI, args []string) {
+	if len(args) == 0 {
+		u.showEffort()
+		return
+	}
+	e, err := live.ParseEffort(strings.Join(args, " "))
+	if err != nil {
+		u.setHint(err.Error(), themeColor(colorDown))
+		return
+	}
+	u.setEffort(e)
+	u.prompt.SetText("")
+	u.setHint("effort set to "+string(e)+" · "+e.Describe(), themeColor(theme.ColorNameForeground))
+}
+
+// splitCommand separates the command word from its arguments.
+func splitCommand(input string) (string, []string) {
+	f := strings.Fields(strings.ToLower(input))
+	if len(f) == 0 {
+		return "", nil
+	}
+	return f[0], f[1:]
 }
 
 // MatchCommand finds the command typed: a name or an alias, or the start of
 // one that only a single command has. Case and spaces do not matter.
 func MatchCommand(input string) (Command, bool) {
-	in := strings.ToLower(strings.TrimSpace(input))
+	in, _ := splitCommand(input)
 	if in == "" {
 		return Command{}, false
 	}
@@ -118,6 +148,11 @@ func (u *UI) onPromptChanged(s string) {
 	if strings.TrimSpace(s) != "" {
 		if c, ok := MatchCommand(s); ok {
 			hint, col = c.Name+" — "+c.Help, themeColor(theme.ColorNameForeground)
+			if _, args := splitCommand(s); c.Name == "effort" && len(args) > 0 {
+				if e, err := live.ParseEffort(strings.Join(args, " ")); err == nil {
+					hint = "effort " + string(e) + " — " + e.Describe()
+				}
+			}
 		} else {
 			hint = "no such command · " + commandNames()
 		}
@@ -140,7 +175,8 @@ func (u *UI) Open(input string) bool {
 		}
 		return false
 	}
-	c.open(u)
+	_, args := splitCommand(input)
+	c.open(u, args)
 	return true
 }
 

@@ -89,6 +89,9 @@ type UI struct {
 	promptHint *canvas.Text
 	histView   *historyView
 
+	// Effort indicator, in the top bar.
+	effort *effortChip
+
 	// Wallet card.
 	walletBox *fyne.Container
 	rightBox  *fyne.Container
@@ -236,7 +239,8 @@ func (u *UI) buildTopBar() fyne.CanvasObject {
 	u.mutedTexts = append(u.mutedTexts, name)
 	gear := widget.NewButtonWithIcon("", theme.SettingsIcon(), u.showSettings)
 	gear.Importance = widget.LowImportance
-	return container.NewHBox(u.homeButton(), container.NewCenter(name), layout.NewSpacer(), gear)
+	u.effort = newEffortChip(u.currentEffort(), u.showEffort)
+	return container.NewHBox(u.homeButton(), container.NewCenter(name), layout.NewSpacer(), container.NewCenter(u.effort), gear)
 }
 
 func (u *UI) buildBotCard() fyne.CanvasObject {

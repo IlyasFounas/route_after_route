@@ -146,8 +146,9 @@ func keyOf(o output.Order) oppKey {
 }
 
 type command struct {
-	kind    string // reevaluate, execution, profile, reset, approve, reject, focus
+	kind    string // reevaluate, execution, profile, reset, approve, reject, focus, pace
 	profile profile.Profile
+	pace    Pace
 	on      bool
 	id      string
 	focus   loop.PriceKey
@@ -199,6 +200,19 @@ type Engine struct {
 	suppressed map[oppKey]bool // rejected or expired: wait for the signal to change
 	approved   map[oppKey]bool // set only during the advance that follows Approve
 	oppSeq     int
+
+	snapEvery   time.Duration // snapshot throttle (Options.SnapshotEvery, then SetPace)
+	reevalEvery time.Duration // full re-evaluation period (Config.ReevaluateEvery, then SetPace)
+	paceChanged bool          // the ticker must be reset to snapEvery
+}
+
+// Pace is how often the engine does its periodic work. A zero field keeps
+// the current value.
+type Pace struct {
+	// SnapshotEvery throttles snapshot publication.
+	SnapshotEvery time.Duration
+	// ReevaluateEvery is the period of the full evaluation, in engine time.
+	ReevaluateEvery time.Duration
 }
 
 // New validates the options and builds an engine (not started).
@@ -243,6 +257,9 @@ func New(o Options) (*Engine, error) {
 		opps:       map[oppKey]*Opportunity{},
 		suppressed: map[oppKey]bool{},
 		approved:   map[oppKey]bool{},
+
+		snapEvery:   o.SnapshotEvery,
+		reevalEvery: o.Config.ReevaluateEvery.Duration,
 	}
 	for _, m := range o.Markets {
 		e.markets[m.Descriptor().ID] = m
@@ -300,6 +317,11 @@ func (e *Engine) Reject(id string) { e.send(command{kind: "reject", id: id}) }
 // SetFocus selects the symbol whose full history is published.
 func (e *Engine) SetFocus(k loop.PriceKey) { e.send(command{kind: "focus", focus: k}) }
 
+// SetPace changes how often snapshots are published and the full
+// evaluation runs (see Effort). It never delays exits: prices, stops and
+// candle closes are still handled as they arrive.
+func (e *Engine) SetPace(p Pace) { e.send(command{kind: "pace", pace: p}) }
+
 func (e *Engine) send(c command) {
 	select {
 	case e.cmds <- c:
@@ -340,9 +362,13 @@ func (e *Engine) Run(ctx context.Context) error {
 		wg.Go(func() { e.follow(streamCtx, m, syms, events) })
 	}
 
-	ticker := time.NewTicker(e.opts.SnapshotEvery)
+	ticker := time.NewTicker(e.snapEvery)
 	defer ticker.Stop()
 	for {
+		if e.paceChanged {
+			ticker.Reset(e.snapEvery)
+			e.paceChanged = false
+		}
 		select {
 		case <-ctx.Done():
 			e.save()
@@ -729,13 +755,13 @@ func (e *Engine) reevaluate(reason string) {
 	res, err := app.Decide(in, e.data)
 	if err != nil {
 		e.fail(fmt.Errorf("re-evaluation: %w", err))
-		e.nextReeval = e.now.Add(e.opts.Config.ReevaluateEvery.Duration)
+		e.nextReeval = e.now.Add(e.reevalEvery)
 		return
 	}
 	// Only the evaluation is kept: the portfolio moves through advance, so
 	// a re-evaluation never opens a position without approval.
 	e.ev, e.evOK = res.Evaluation, true
-	e.nextReeval = e.now.Add(e.opts.Config.ReevaluateEvery.Duration)
+	e.nextReeval = e.now.Add(e.reevalEvery)
 	e.lastErr = ""
 	sel := make([]string, len(res.Evaluation.Decision.Selected))
 	for i, a := range res.Evaluation.Decision.Selected {
@@ -792,8 +818,26 @@ func (e *Engine) onCommand(c command) {
 		e.reject(c.id)
 	case "focus":
 		e.focus = c.focus
+	case "pace":
+		e.setPace(c.pace)
 	}
 	e.publish()
+}
+
+func (e *Engine) setPace(p Pace) {
+	if p.SnapshotEvery > 0 && p.SnapshotEvery != e.snapEvery {
+		e.snapEvery, e.paceChanged = p.SnapshotEvery, true
+	}
+	if p.ReevaluateEvery > 0 && p.ReevaluateEvery != e.reevalEvery {
+		// Keep the time already waited: a shorter period may make the next
+		// evaluation due right away (checked at the next candle close).
+		last := e.nextReeval.Add(-e.reevalEvery)
+		e.reevalEvery = p.ReevaluateEvery
+		if !e.nextReeval.IsZero() {
+			e.nextReeval = last.Add(p.ReevaluateEvery)
+		}
+		e.info(fmt.Sprintf("full re-evaluation now every %s", shortDuration(p.ReevaluateEvery)))
+	}
 }
 
 func (e *Engine) recordOrders(orders []output.Order) {

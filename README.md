@@ -77,6 +77,7 @@ The app opens on its name, three lines on how it works and a single prompt. Type
 |---|---|
 | `trading` | the algorithm, live, on all your cryptos |
 | `historic` | every closed trade, with what it gained or lost |
+| `effort` | how much of your computer the algorithm uses (`effort low` sets it directly) |
 
 The start of a word is enough (`t`, `hist`), and the line under the prompt tells what it will open. **Escape**, or the home icon, brings the prompt back. The algorithm keeps running whatever the screen, and opportunities are still notified.
 
@@ -129,6 +130,18 @@ Results are **net of trading costs**: the Binance fee plus the configured slippa
 ### In the background
 
 **Closing the window does not stop the algorithm.** It keeps watching from the system-tray icon and notifies every opportunity; the tray menu lets you accept them. Use *Quit* in the tray menu to stop it: the ledger is saved on exit.
+
+**Effort.** Lower it while you code, watch a movie or play a game. Type `effort` at the prompt, or click the meter at the top of the trading screen, then move with ←/→ and press Enter. `effort low` sets a level directly. It is applied at once, without restarting anything:
+
+| Level | Cores | UI refresh | Full re-evaluation | OS priority |
+|---|---|---|---|---|
+| `low` | 1 | 1×/s | every 30 min | lower |
+| `medium` | 2 | 2×/s | every 15 min | lower |
+| `high` (default) | half | 4×/s | every 5 min | normal |
+| `xhigh` | all | 4×/s | every 2 min | normal |
+| `max` | all | 8×/s | every minute | normal |
+
+Every level still reads each 1-second candle, so stops and the max hold always fire on time. Only the heavy walk-forward evaluation runs less often. On Linux and macOS, going back to a normal priority after a lower one needs privileges: it then applies at the next launch, while the cores and the refresh rate come back at once.
 
 The theme is warm and light, with a warm dark variant when your system uses dark mode.
 

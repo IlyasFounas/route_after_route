@@ -181,6 +181,7 @@ type fakeBackend struct {
 	executes []bool
 	approved []string
 	history  []Point
+	efforts  []live.Effort
 }
 
 func (f *fakeBackend) calls() []bool {
@@ -229,8 +230,15 @@ func (f *fakeBackend) RefreshWallet()               {}
 func (f *fakeBackend) SetRiskTolerance(int) error   { return nil }
 func (f *fakeBackend) SetTiming(int, int) error     { return nil }
 func (f *fakeBackend) SetRPCs(string, string) error { return nil }
-func (f *fakeBackend) Folder() string               { return "/tmp/rar" }
-func (f *fakeBackend) Quit()                        {}
+func (f *fakeBackend) SetEffort(e live.Effort) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.efforts = append(f.efforts, e)
+	f.settings.Effort = string(e)
+	return "", nil
+}
+func (f *fakeBackend) Folder() string { return "/tmp/rar" }
+func (f *fakeBackend) Quit()          {}
 
 func newTestUI(t *testing.T) (*UI, *fakeBackend) {
 	return newTestUIWith(t, Settings{Pair: pair, Favorites: []string{pair, "BTCUSDT"}, Range: "1D",
@@ -504,6 +512,7 @@ func TestMatchCommand(t *testing.T) {
 	for in, want := range map[string]string{
 		"trading": "trading", " Trading ": "trading", "t": "trading", "algo": "trading",
 		"historic": "historic", "history": "historic", "hist": "historic", "H": "historic",
+		"effort": "effort", "effort low": "effort", " E  max ": "effort", "perf": "effort",
 	} {
 		if c, ok := MatchCommand(in); !ok || c.Name != want {
 			t.Errorf("%q → %q %v, want %q", in, c.Name, ok, want)
@@ -539,6 +548,53 @@ func TestHomePrompt(t *testing.T) {
 	if !u.Open("trading") || !u.screens[screenTrading].Visible() {
 		t.Fatal("trading should open the algorithm")
 	}
+}
+
+func TestEffortFromThePrompt(t *testing.T) {
+	u, be := newTestUI(t)
+	if u.effort.level != live.DefaultEffort {
+		t.Fatalf("header shows %q before any choice", u.effort.level)
+	}
+	test.Type(u.prompt, "effort lo")
+	if !strings.HasPrefix(u.promptHint.Text, "effort low — re-evaluates every 30 min") {
+		t.Fatalf("hint %q", u.promptHint.Text)
+	}
+	if !u.Open("effort low") || u.screen != screenHome {
+		t.Fatal("effort low is a command that stays on the prompt")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for u.effort.level != live.EffortLow && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	be.mu.Lock()
+	got := slices.Clone(be.efforts)
+	be.mu.Unlock()
+	if !slices.Equal(got, []live.Effort{live.EffortLow}) || u.effort.level != live.EffortLow {
+		t.Fatalf("SetEffort calls %v, header %q", got, u.effort.level)
+	}
+	u.Open("effort turbo")
+	if !strings.Contains(u.promptHint.Text, "unknown effort") {
+		t.Fatalf("an unknown level must be refused: %q", u.promptHint.Text)
+	}
+}
+
+func TestEffortPickerKeys(t *testing.T) {
+	var seen []live.Effort
+	var submitted live.Effort
+	p := newEffortPicker(live.EffortHigh, func(e live.Effort) { seen = append(seen, e) })
+	p.onSubmit = func(e live.Effort) { submitted = e }
+	for _, k := range []fyne.KeyName{fyne.KeyRight, fyne.KeyRight, fyne.KeyRight, fyne.KeyLeft, fyne.KeyReturn} {
+		p.TypedKey(&fyne.KeyEvent{Name: k})
+	}
+	if !slices.Equal(seen, []live.Effort{live.EffortXHigh, live.EffortMax, live.EffortXHigh}) || submitted != live.EffortXHigh {
+		t.Fatalf("seen %v, submitted %q", seen, submitted)
+	}
+	p.Resize(fyne.NewSize(500, 64))
+	p.Tapped(&fyne.PointEvent{Position: fyne.NewPos(10, 20)})
+	if p.level != live.EffortLow {
+		t.Fatalf("a click on the first notch picks low, got %q", p.level)
+	}
+	test.TempWidgetRenderer(t, p).Refresh()
 }
 
 func TestTickerSearch(t *testing.T) {

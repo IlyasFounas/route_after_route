@@ -32,7 +32,6 @@ const (
 	// liveLookback is the history evaluated by the walk-forward (7200
 	// candles of 1 s per crypto: 8 REST pages each at startup).
 	liveLookback    = 2 * time.Hour
-	liveReevaluate  = 5 * time.Minute
 	liveHistoryBars = 3600 // 1 h on the chart
 	defaultApproval = 10
 	defaultMaxHold  = 60
@@ -46,7 +45,8 @@ const (
 
 func defaultSettings() gui.Settings {
 	return gui.Settings{Pair: defaultPair, Favorites: []string{defaultPair}, Range: gui.DefaultRange,
-		WalletMode: gui.ModePublic, ApprovalSeconds: defaultApproval, MaxHoldSeconds: defaultMaxHold}
+		WalletMode: gui.ModePublic, ApprovalSeconds: defaultApproval, MaxHoldSeconds: defaultMaxHold,
+		Effort: string(live.DefaultEffort)}
 }
 
 // paths are the user's files.
@@ -194,6 +194,9 @@ func sanitize(st gui.Settings) gui.Settings {
 	if st.LedgerCapital < 0 {
 		st.LedgerCapital = 0
 	}
+	if !slices.Contains(live.Efforts, live.Effort(st.Effort)) {
+		st.Effort = string(live.DefaultEffort)
+	}
 	return st
 }
 
@@ -236,7 +239,7 @@ func (s *session) engineConfig() rar.Config {
 		cfg.Markets[i] = rar.MarketConfig{Type: "binance", Options: json.RawMessage(opts)}
 	}
 	cfg.Period = rar.PeriodConfig{Lookback: rar.Duration{Duration: liveLookback}}
-	cfg.ReevaluateEvery = rar.Duration{Duration: liveReevaluate}
+	cfg.ReevaluateEvery = rar.Duration{Duration: s.effortLocked().Params().ReevaluateEvery}
 	return cfg
 }
 
@@ -280,6 +283,7 @@ func (s *session) focusLocked(markets []market.Market) loop.PriceKey {
 func (s *session) start() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	applyResources(s.effortLocked().Params())
 	if err := s.startLocked(); err != nil {
 		return err
 	}
@@ -311,6 +315,9 @@ func (s *session) startLocked() error {
 		HistoryBars: 3000,
 		Focus:       s.focusLocked(markets),
 		ApprovalTTL: time.Duration(s.settings.ApprovalSeconds) * time.Second,
+		// The cadence of the effort level; the demo keeps its config's
+		// re-evaluation period (see paceLocked).
+		SnapshotEvery: s.paceLocked().SnapshotEvery,
 	}
 	if !s.fixed {
 		// Every reliable (market, strategy) pair may signal: each favorite

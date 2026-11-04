@@ -48,6 +48,8 @@ type Settings struct {
 	ApprovalSeconds int `json:"approval_seconds,omitempty"`
 	// MaxHoldSeconds closes a position held this long.
 	MaxHoldSeconds int `json:"max_hold_seconds,omitempty"`
+	// Effort is the performance level (see live.Efforts).
+	Effort string `json:"effort,omitempty"`
 }
 
 // Coin is a crypto the user can follow.
@@ -116,6 +118,9 @@ type Backend interface {
 	SetRiskTolerance(r int) error
 	SetTiming(approvalSeconds, maxHoldSeconds int) error
 	SetRPCs(mainnet, devnet string) error
+	// SetEffort changes the performance level, live. The note, when not
+	// empty, tells what only applies at the next launch.
+	SetEffort(e live.Effort) (note string, err error)
 	Folder() string
 	Quit()
 }
