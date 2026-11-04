@@ -102,7 +102,8 @@ func resolvePaths(profilePath, configPath, statePath string, demo bool) (paths, 
 		return paths{}, false, fmt.Errorf("preparing %s: %w", dir, err)
 	}
 	p := paths{Dir: dir, Profile: profilePath, Config: configPath, State: statePath,
-		Settings: filepath.Join(dir, "settings.json"), DevnetKey: filepath.Join(dir, "devnet-wallet.json")}
+		Settings: filepath.Join(dir, "settings.json"), DevnetKey: filepath.Join(dir, "devnet-wallet.json"),
+		MainVault: filepath.Join(dir, "main-wallet.json")}
 	fixed := configPath != ""
 	if demo {
 		p.Config, fixed = filepath.Join(dir, "demo", "config.json"), true

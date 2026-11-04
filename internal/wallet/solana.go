@@ -1,7 +1,9 @@
-// Package wallet reads crypto wallets. Mainnet wallets are strictly
-// read-only: only PUBLIC addresses are handled. The only private key this
-// package ever touches is the app-generated DEVNET test key (devnet.go),
-// which holds worthless test SOL.
+// Package wallet reads Solana wallets and, on devnet only, signs transfers.
+//
+// Two kinds of private keys exist: the app-generated bot key (devnet.go)
+// and the user's imported main wallet (import.go), which is kept encrypted
+// at rest (vault.go). Transfer refuses mainnet: no key handled here ever
+// moves real funds.
 package wallet
 
 import (
@@ -11,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 	"net/http"
 	"sort"
 	"strconv"
@@ -85,18 +86,12 @@ func ValidateSolanaAddress(s string) error {
 	if len(s) < 32 || len(s) > 44 {
 		return errors.New("a Solana address has 32 to 44 characters")
 	}
-	n := new(big.Int)
-	for _, c := range s {
-		i := strings.IndexRune(base58Alphabet, c)
-		if i < 0 {
-			return fmt.Errorf("invalid character %q in a Solana address", c)
-		}
-		n.Mul(n, big.NewInt(58))
-		n.Add(n, big.NewInt(int64(i)))
+	b, err := DecodeBase58(s)
+	if err != nil {
+		return fmt.Errorf("%w in a Solana address", err)
 	}
-	leadingZeros := len(s) - len(strings.TrimLeft(s, "1"))
-	if size := leadingZeros + len(n.Bytes()); size != 32 {
-		return fmt.Errorf("not a Solana public key (%d bytes instead of 32)", size)
+	if len(b) != 32 {
+		return fmt.Errorf("not a Solana public key (%d bytes instead of 32)", len(b))
 	}
 	return nil
 }

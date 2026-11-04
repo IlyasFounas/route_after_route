@@ -182,6 +182,7 @@ type fakeBackend struct {
 	approved []string
 	history  []Point
 	efforts  []live.Effort
+	imported string
 }
 
 func (f *fakeBackend) calls() []bool {
@@ -221,15 +222,32 @@ func (f *fakeBackend) Approve(id string) {
 	defer f.mu.Unlock()
 	f.approved = append(f.approved, id)
 }
-func (f *fakeBackend) Reject(string)                {}
-func (f *fakeBackend) SetWalletMode(string) error   { return nil }
-func (f *fakeBackend) SetWallet(string) error       { return nil }
-func (f *fakeBackend) Airdrop() error               { return nil }
-func (f *fakeBackend) SyncLedger() error            { return nil }
-func (f *fakeBackend) RefreshWallet()               {}
-func (f *fakeBackend) SetRiskTolerance(int) error   { return nil }
-func (f *fakeBackend) SetTiming(int, int) error     { return nil }
-func (f *fakeBackend) SetRPCs(string, string) error { return nil }
+func (f *fakeBackend) Reject(string)              {}
+func (f *fakeBackend) SetWalletMode(string) error { return nil }
+func (f *fakeBackend) SetWallet(string) error     { return nil }
+func (f *fakeBackend) Airdrop(bool) error         { return nil }
+func (f *fakeBackend) ImportMain(secret, password string, account uint32) (string, error) {
+	kp, err := wallet.ParseSecret(secret, account)
+	if err != nil {
+		return "", err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.imported = kp.Address()
+	return f.imported, nil
+}
+func (f *fakeBackend) UnlockMain(string) error                  { return nil }
+func (f *fakeBackend) LockMain()                                {}
+func (f *fakeBackend) ForgetMain() error                        { return nil }
+func (f *fakeBackend) TransferFee(bool, uint64) (uint64, error) { return 5000, nil }
+func (f *fakeBackend) FundBot(uint64) (string, error)           { return "sig", nil }
+func (f *fakeBackend) WithdrawToMain(uint64) (string, error)    { return "sig", nil }
+func (f *fakeBackend) SetMaxTrade(c int64) error                { f.settings.MaxTradeCents = c; return nil }
+func (f *fakeBackend) SyncLedger() error                        { return nil }
+func (f *fakeBackend) RefreshWallet()                           {}
+func (f *fakeBackend) SetRiskTolerance(int) error               { return nil }
+func (f *fakeBackend) SetTiming(int, int) error                 { return nil }
+func (f *fakeBackend) SetRPCs(string, string) error             { return nil }
 func (f *fakeBackend) SetEffort(e live.Effort) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -428,10 +446,7 @@ func TestPublicModeOnlyAdvises(t *testing.T) {
 	}
 }
 
-func TestDevnetWalletCard(t *testing.T) {
-	u, _ := newTestUI(t)
-	u.applyWallet(WalletView{Devnet: true, Address: "11111111111111111111111111111111", Updated: t0, Total: 150,
-		Holdings: []HoldingView{{Holding: wallet.Holding{Symbol: "SOL", Name: "Solana", Amount: 1}, Price: 150, Value: 150, Priced: true}}})
+func buttonLabels(o fyne.CanvasObject) []string {
 	var labels []string
 	var walk func(fyne.CanvasObject)
 	walk = func(o fyne.CanvasObject) {
@@ -444,10 +459,88 @@ func TestDevnetWalletCard(t *testing.T) {
 			}
 		}
 	}
-	walk(u.walletBox)
-	for _, want := range []string{"Public wallet", "Devnet", "Airdrop 1 SOL", "Sync ledger", "Copy address"} {
+	walk(o)
+	return labels
+}
+
+func TestDevnetWalletCard(t *testing.T) {
+	u, _ := newTestUI(t)
+	bot := WalletView{Devnet: true, Address: "11111111111111111111111111111111", Updated: t0, Total: 150,
+		Holdings: []HoldingView{{Holding: wallet.Holding{Symbol: "SOL", Name: "Solana", Amount: 1}, Price: 150, Value: 150, Priced: true}}}
+	u.applyWallet(bot)
+	labels := buttonLabels(u.walletBox)
+	for _, want := range []string{"Public wallet", "Devnet", "Import your wallet", "Airdrop", "Sync ledger", "Copy address"} {
 		if !slices.Contains(labels, want) {
-			t.Errorf("missing button %q in %v", want, labels)
+			t.Errorf("no main account: missing button %q in %v", want, labels)
+		}
+	}
+	if slices.Contains(labels, "Fund bot") {
+		t.Error("nothing to fund the bot from without a main account")
+	}
+	main := bot
+	main.Address, main.Locked = "HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk", true
+	bot.Main = &main
+	u.hidden = true // no unlock prompt in this test
+	u.applyWallet(bot)
+	labels = buttonLabels(u.walletBox)
+	for _, want := range []string{"Unlock", "Airdrop", "Forget", "Fund bot", "Withdraw", "Copy address", "Sync ledger"} {
+		if !slices.Contains(labels, want) {
+			t.Errorf("with a main account: missing button %q in %v", want, labels)
+		}
+	}
+	main.Locked = false
+	u.applyWallet(bot)
+	if labels = buttonLabels(u.walletBox); !slices.Contains(labels, "Lock") {
+		t.Errorf("an unlocked account can be locked: %v", labels)
+	}
+}
+
+func TestImportShowsTheAddressBeforeSaving(t *testing.T) {
+	u, be := newTestUI(t)
+	u.showImportMain()
+	d := u.importDialog
+	if d.valid() == nil {
+		t.Fatal("an empty form must not be valid")
+	}
+	test.Type(d.secret, "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
+	if d.addr.Text != "HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk" || d.checked.Disabled() {
+		t.Fatalf("address %q, check disabled %v", d.addr.Text, d.checked.Disabled())
+	}
+	d.account.SetText("1")
+	if d.addr.Text != "Hh8QwFUA6MtVu1qAoq12ucvFHNwCcVTV7hpWjeY1Hztb" || d.checked.Checked {
+		t.Fatalf("account 1: %q (a new address must be checked again)", d.addr.Text)
+	}
+	d.checked.SetChecked(true)
+	d.pw.SetText("correct horse")
+	d.pw2.SetText("correct horsE")
+	if d.valid() == nil {
+		t.Fatal("different passwords must not be valid")
+	}
+	d.pw2.SetText("correct horse")
+	if err := d.valid(); err != nil {
+		t.Fatal(err)
+	}
+	if be.imported != "" {
+		t.Fatal("nothing is saved before Import")
+	}
+	d.secret.SetText(EncodeAddressLike())
+	if !d.checked.Disabled() || d.valid() == nil {
+		t.Fatal("a public address is not a secret")
+	}
+}
+
+// EncodeAddressLike is a public address, which must never pass as a secret.
+func EncodeAddressLike() string { return "HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk" }
+
+func TestParseSOL(t *testing.T) {
+	for in, want := range map[string]uint64{"1": 1e9, "0.25": 25e7, "1,5": 15e8, ".000000001": 1, " 2.000000000 ": 2e9} {
+		if got, err := parseSOL(in); err != nil || got != want {
+			t.Errorf("%q → %d, %v; want %d", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"", "0", "-1", "+1", "1.0000000001", "abc", "1e3", "99999999999"} {
+		if _, err := parseSOL(bad); err == nil {
+			t.Errorf("%q accepted", bad)
 		}
 	}
 }
@@ -562,15 +655,20 @@ func TestEffortFromThePrompt(t *testing.T) {
 	if !u.Open("effort low") || u.screen != screenHome {
 		t.Fatal("effort low is a command that stays on the prompt")
 	}
+	if u.effort.level != live.EffortLow {
+		t.Fatalf("the header shows the new level at once, got %q", u.effort.level)
+	}
+	calls := func() []live.Effort {
+		be.mu.Lock()
+		defer be.mu.Unlock()
+		return slices.Clone(be.efforts)
+	}
 	deadline := time.Now().Add(2 * time.Second)
-	for u.effort.level != live.EffortLow && time.Now().Before(deadline) {
+	for len(calls()) == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	be.mu.Lock()
-	got := slices.Clone(be.efforts)
-	be.mu.Unlock()
-	if !slices.Equal(got, []live.Effort{live.EffortLow}) || u.effort.level != live.EffortLow {
-		t.Fatalf("SetEffort calls %v, header %q", got, u.effort.level)
+	if got := calls(); !slices.Equal(got, []live.Effort{live.EffortLow}) {
+		t.Fatalf("SetEffort calls %v", got)
 	}
 	u.Open("effort turbo")
 	if !strings.Contains(u.promptHint.Text, "unknown effort") {
@@ -579,6 +677,7 @@ func TestEffortFromThePrompt(t *testing.T) {
 }
 
 func TestEffortPickerKeys(t *testing.T) {
+	test.NewTempApp(t).Settings().SetTheme(WarmTheme{})
 	var seen []live.Effort
 	var submitted live.Effort
 	p := newEffortPicker(live.EffortHigh, func(e live.Effort) { seen = append(seen, e) })

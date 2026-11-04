@@ -200,22 +200,53 @@ L'application de bureau ne permet l'exécution que dans certains modes :
 | Mode | Portefeuille affiché | Le bot peut trader ? | Registre |
 |---|---|---|---|
 | **Public** | adresse publique mainnet, en lecture seule | non : conseils et notifications seulement | aucun |
-| **Devnet** | portefeuille devnet généré par l'app (`devnet-wallet.json`, format Solana CLI, `0600`) | oui, entrée par entrée, avec approbation | `devnet-ledger.json` |
+| **Devnet** | compte principal importé (`main-wallet.json`, chiffré) et compte bot généré par l'app (`devnet-wallet.json`, format Solana CLI, `0600`) | oui, entrée par entrée, avec approbation, sur le seul registre du compte bot | `devnet-ledger.json` |
 | **Démo** (`--demo`, `--config`) | — | oui, avec approbation | `state.json` du dossier de la config |
 
 **Registre devnet.** Aucun DEX du devnet n'a de liquidité réelle : les entrées approuvées sont donc exécutées au **prix Binance réel**, dans un registre local (`loop.State`).
 
-- Son capital de départ est la valeur du portefeuille devnet (SOL de test × prix réel du SOL), figée par *Sync ledger*.
+- Son capital de départ est la valeur du compte bot (SOL de test × prix réel du SOL), figée par *Sync ledger*.
 - Il faut au moins 10 $. En dessous, l'exécution est refusée.
 - Quitter le devnet solde les positions ouvertes au dernier prix et coupe l'autorisation.
+- **Montant maximal par trade** : `loop.Rules.MaxAmount`, en centimes (`Options.MaxTrade`, `Engine.SetMaxTrade`, 20 $ par défaut). `Advance` plafonne chaque nouvelle position, et les propositions portent le montant plafonné : l'utilisateur approuve exactement ce qui sera engagé.
+
+### Compte principal et compte bot
+
+Le bot ne peut jamais dépenser plus que ce que l'utilisateur lui a confié.
+
+- **Compte principal** : le portefeuille de l'utilisateur, importé (voir *Import et coffre chiffré*). Sa clé n'est en mémoire que déverrouillée, et ne signe que des virements vers le compte bot.
+- **Compte bot** : la clé générée par l'app. Le moteur ne connaît que le registre financé depuis ce compte.
+- **Alimenter** (`FundBot`) : virement devnet principal → bot. Une fois confirmé, sa valeur au prix du SOL est ajoutée au registre par `Engine.Deposit`, sans toucher aux positions. Un registre jamais financé repart de la valeur totale du compte bot, comme *Sync ledger*.
+- **Retirer** (`WithdrawToMain`) : la valeur est d'abord **réservée** sur le cash libre du registre (`Deposit` négatif, refusé au-delà : `ErrNotEnoughCash`). Le virement bot → principal part ensuite, et la réserve est rendue s'il échoue. Seule l'adresse du compte principal est nécessaire : il peut rester verrouillé.
+- `Engine.Deposit` est bloquant : il attend que la boucle d'événements l'ait appliqué. Avant le premier cycle exécuté, il modifie le capital de départ plutôt que le cash. `LedgerCapital` suit les dépôts et les retraits, pour que le résultat affiché reste juste.
 
 `live.Engine.recordOrders` reste le point unique où brancher plus tard un vrai exécuteur, par exemple un swap on-chain.
 
 ## Portefeuille (`wallet`)
 
-Le package `wallet` lit un portefeuille en **lecture seule**, à partir d'une adresse publique uniquement.
+Le package `wallet` lit des portefeuilles Solana et, **sur devnet uniquement**, signe des virements. Il n'utilise que la bibliothèque standard.
 
-La seule clé privée qu'il manipule est la clé de test **devnet** générée par l'app (`devnet.go`, `crypto/ed25519` de la bibliothèque standard), qui ne détient que du SOL de test sans valeur. `RequestAirdrop` demande 1 SOL de test au faucet du devnet. Le faucet public est très limité en débit : en cas de refus, l'app renvoie vers faucet.solana.com.
+Il manipule deux clés privées : celle du compte bot, générée par l'app (`devnet.go`), et celle du compte principal importé par l'utilisateur (`import.go`), chiffrée au repos (`vault.go`). `RequestAirdrop` demande 1 SOL de test au faucet du devnet. Le faucet public est très limité en débit : en cas de refus, l'app renvoie vers faucet.solana.com.
+
+### Import et coffre chiffré
+
+- **Formats** (`ParseSecret`) :
+  - phrase de récupération BIP-39 de 12 à 24 mots, avec la liste anglaise officielle embarquée et la vérification de la somme de contrôle. La graine est dérivée par `crypto/pbkdf2` (HMAC-SHA512, 2048 tours), puis par SLIP-0010 ed25519 sur le chemin de Phantom et Solflare, `m/44'/501'/compte'/0'` ;
+  - clé privée base58 de 64 octets (« Export private key » de Phantom) ;
+  - tableau JSON du CLI Solana.
+
+  Une adresse publique est refusée explicitement. Les messages d'erreur ne contiennent jamais le secret.
+- **Vérification** : l'interface affiche l'adresse dérivée **avant** l'enregistrement, et une case « c'est l'adresse de mon portefeuille » doit être cochée.
+- **Coffre** (`SaveVault` / `OpenVault`) : `main-wallet.json`, mode `0600`, écrit de façon atomique. AES-256-GCM, clé dérivée du mot de passe par PBKDF2-HMAC-SHA256 avec 600 000 tours et un sel de 16 octets. L'adresse est en clair, pour afficher les soldes sans le mot de passe, et liée au chiffré comme donnée authentifiée : on ne peut pas l'échanger. Un mauvais mot de passe donne `ErrWrongPassword`.
+- **En mémoire** : la clé n'est déchiffrée qu'au déverrouillage. *Lock*, *Forget* et la fermeture de l'app l'effacent (`clear`). Elle n'est jamais écrite dans `settings.json` ni dans les journaux.
+
+### Virements
+
+`Solana.Transfer` construit un message *legacy* d'un `SystemProgram.transfer` : en-tête, trois comptes, blockhash récent, instruction d'index 2 suivie des lamports en petit-boutiste. Il le signe en ed25519, l'envoie par `sendTransaction`, puis interroge `getSignatureStatuses` jusqu'à `confirmed`. Il s'arrête en erreur si le blockhash expire.
+
+- **Garde devnet** : le virement est refusé (`ErrNotTestCluster`) si l'URL contient `mainnet`, ou si le hash de genèse du cluster n'est pas celui du devnet ou du testnet. Une liste blanche, donc : un RPC mainnet personnalisé est refusé lui aussi.
+- **Frais** : `TransferFee` passe par `getFeeForMessage`. Un compte neuf doit recevoir au moins le minimum d'exemption de loyer (`getMinimumBalanceForRentExemption`).
+- **Vérification** : le format des transactions a été validé contre le vrai devnet par `simulateTransaction` avec `sigVerify`. La transaction est désérialisée, la signature vérifiée, et l'erreur obtenue est `AccountNotFound` pour un payeur sans fonds.
 
 - **Validation** : l'adresse doit être en base58 et décoder en 32 octets.
 - **Lecture** : JSON-RPC `getBalance` pour les SOL, puis `getTokenAccountsByOwner` sur les programmes Token et Token-2022 pour les jetons. Les soldes d'un même jeton répartis sur plusieurs comptes sont additionnés.

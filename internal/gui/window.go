@@ -93,10 +93,12 @@ type UI struct {
 	effort *effortChip
 
 	// Wallet card.
-	walletBox *fyne.Container
-	rightBox  *fyne.Container
-	leftBox   *fyne.Container // re-laid out when texts change width
-	botBox    *fyne.Container
+	unlockAsked  bool          // the main account's unlock was offered
+	importDialog *importDialog // the last import form (tests)
+	walletBox    *fyne.Container
+	rightBox     *fyne.Container
+	leftBox      *fyne.Container // re-laid out when texts change width
+	botBox       *fyne.Container
 }
 
 // New builds the window.

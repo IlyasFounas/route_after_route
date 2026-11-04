@@ -3,6 +3,7 @@ package live
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"math/rand/v2"
 	"slices"
@@ -401,5 +402,49 @@ func TestMaxHoldClosesAutomatically(t *testing.T) {
 	e.onCommand(command{kind: "reset"})
 	if len(e.state.Trades) != 1 {
 		t.Fatal("the history must survive a ledger reset")
+	}
+}
+
+func TestDepositAndWithdraw(t *testing.T) {
+	e, _ := newTestEngine(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- e.Run(ctx) }()
+	if err := e.Deposit(ctx, 5_000); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Deposit(ctx, -1_000_000_000); !errors.Is(err, ErrNotEnoughCash) {
+		t.Fatalf("withdrawing more than the free cash: %v", err)
+	}
+	if err := e.Deposit(ctx, -1_000); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, ev := range e.Last().Log {
+		if strings.HasPrefix(ev.Text, "deposit of") || strings.HasPrefix(ev.Text, "withdrawal of") {
+			lines = append(lines, ev.Text[:strings.Index(ev.Text, ":")])
+		}
+	}
+	if !slices.Equal(lines, []string{"deposit of 50.00", "withdrawal of 10.00"}) {
+		t.Fatalf("journal %v", lines)
+	}
+}
+
+func TestDepositAfterFirstCycleMovesCash(t *testing.T) {
+	e, _ := newTestEngine(t)
+	e.state = loop.State{Cycle: 3, Cash: 700, Positions: []loop.Position{{Market: "fake", Symbol: "X", Amount: 300, Direction: 1, EntryPrice: 1}}}
+	if err := e.deposit(-800); !errors.Is(err, ErrNotEnoughCash) {
+		t.Fatalf("the 300 in the position are not free: %v", err)
+	}
+	if err := e.deposit(-700); err != nil || e.state.Cash != 0 || len(e.state.Positions) != 1 {
+		t.Fatalf("%v %+v", err, e.state)
+	}
+	if err := e.deposit(250); err != nil || e.state.Cash != 250 {
+		t.Fatalf("%v %+v", err, e.state)
 	}
 }

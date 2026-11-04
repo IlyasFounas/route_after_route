@@ -46,7 +46,7 @@ const (
 func defaultSettings() gui.Settings {
 	return gui.Settings{Pair: defaultPair, Favorites: []string{defaultPair}, Range: gui.DefaultRange,
 		WalletMode: gui.ModePublic, ApprovalSeconds: defaultApproval, MaxHoldSeconds: defaultMaxHold,
-		Effort: string(live.DefaultEffort)}
+		Effort: string(live.DefaultEffort), MaxTradeCents: defaultMaxTrade}
 }
 
 // paths are the user's files.
@@ -55,8 +55,10 @@ type paths struct {
 	// State is the ledger: the devnet ledger in live mode, the demo ledger
 	// with --demo / --config.
 	State string
-	// DevnetKey is the app-generated devnet keypair (Solana CLI format).
+	// DevnetKey is the app-generated bot account (Solana CLI format).
 	DevnetKey string
+	// MainVault is the user's imported main account, encrypted.
+	MainVault string
 }
 
 // session owns the live engine and everything the window asks for. It
@@ -71,7 +73,10 @@ type session struct {
 	cfg        rar.Config
 	profile    profile.Profile // as in profile.json
 	settings   gui.Settings
-	devnetAddr string
+	devnetAddr string          // the bot account's address
+	botKey     *wallet.Keypair // the bot account (devnet mode)
+	mainAddr   string          // the imported main account ("" = none)
+	mainKey    *wallet.Keypair // its key, only while unlocked
 	eng        *live.Engine
 	cancel     context.CancelFunc
 	done       chan struct{}
@@ -128,6 +133,12 @@ func newSession(p paths, fixed bool, pair string) (*session, error) {
 	}
 	if !fixed && st.WalletMode == gui.ModeDevnet {
 		if err := s.loadDevnetKey(); err != nil {
+			cancel()
+			return nil, err
+		}
+	}
+	if !fixed {
+		if err := s.loadMainLocked(); err != nil {
 			cancel()
 			return nil, err
 		}
@@ -194,6 +205,9 @@ func sanitize(st gui.Settings) gui.Settings {
 	if st.LedgerCapital < 0 {
 		st.LedgerCapital = 0
 	}
+	if st.MaxTradeCents < minMaxTrade {
+		st.MaxTradeCents = defaultMaxTrade
+	}
 	if !slices.Contains(live.Efforts, live.Effort(st.Effort)) {
 		st.Effort = string(live.DefaultEffort)
 	}
@@ -218,7 +232,7 @@ func (s *session) loadDevnetKey() error {
 	if err != nil {
 		return fmt.Errorf("devnet wallet: %w", err)
 	}
-	s.devnetAddr = kp.Address()
+	s.devnetAddr, s.botKey = kp.Address(), &kp
 	return nil
 }
 
@@ -327,6 +341,7 @@ func (s *session) startLocked() error {
 		// Engine time follows the 1 s candles, so the max hold is in real
 		// seconds. (The demo replays days in a fraction of a second.)
 		opts.MaxHold = time.Duration(s.settings.MaxHoldSeconds) * time.Second
+		opts.MaxTrade = s.settings.MaxTradeCents
 	}
 	if s.ledgerLocked() {
 		state, err := loop.Load(s.paths.State)
@@ -705,11 +720,15 @@ func (s *session) devnetRPCLocked() string {
 	return wallet.DevnetRPC
 }
 
-// Airdrop asks the devnet faucet for 1 SOL. The balance is read again a few
-// seconds later, once the transaction is confirmed.
-func (s *session) Airdrop() error {
+// Airdrop asks the devnet faucet for 1 SOL, for the main account (toMain)
+// or the bot account. The balances are read again a few seconds later,
+// once the transaction is confirmed.
+func (s *session) Airdrop(toMain bool) error {
 	s.mu.Lock()
 	addr, rpc, devnet := s.devnetAddr, s.devnetRPCLocked(), s.settings.WalletMode == gui.ModeDevnet
+	if toMain {
+		addr = s.mainAddr
+	}
 	s.mu.Unlock()
 	if !devnet || addr == "" {
 		return errors.New("switch the wallet card to devnet first")
@@ -858,6 +877,7 @@ func (s *session) Quit() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stopLocked()
+	s.lockMainLocked()
 	s.stopAll()
 }
 
@@ -877,6 +897,7 @@ func (s *session) walletLoop() {
 		}
 		s.mu.Lock()
 		st, devAddr, rpc := s.settings, s.devnetAddr, s.devnetRPCLocked()
+		mainAddr, locked := s.mainAddr, s.mainKey == nil
 		s.mu.Unlock()
 		devnet := st.WalletMode == gui.ModeDevnet && !s.fixed
 		addr := st.Wallet
@@ -896,7 +917,16 @@ func (s *session) walletLoop() {
 		loading := prev
 		loading.Loading = true
 		publish(s.wallets, loading)
+		main := prev.Main
 		prev = s.readWallet(prev, rpc, addr)
+		if devnet && mainAddr != "" {
+			if main == nil || main.Address != mainAddr {
+				main = &gui.WalletView{Devnet: true, Address: mainAddr}
+			}
+			m := s.readWallet(*main, rpc, mainAddr)
+			m.Locked = locked
+			prev.Main = &m
+		}
 		publish(s.wallets, prev)
 	}
 }

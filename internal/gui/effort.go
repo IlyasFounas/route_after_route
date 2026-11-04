@@ -20,26 +20,32 @@ func (u *UI) currentEffort() live.Effort {
 	return live.Efforts[e.Index()]
 }
 
-// setEffort applies a level (off the Fyne goroutine: the backend may block)
-// and refreshes the header indicator.
+// setEffort shows the new level at once, then applies it off the Fyne
+// goroutine (the backend may block). A refusal puts the previous level back.
 func (u *UI) setEffort(e live.Effort) {
+	prev := u.currentEffort()
+	u.showEffortLevel(e)
 	go func() {
 		note, err := u.be.SetEffort(e)
+		if err == nil && note == "" {
+			return
+		}
 		fyne.Do(func() {
-			u.settings = u.be.Settings()
 			if err != nil {
+				u.showEffortLevel(prev)
 				showError(u, err)
 				return
 			}
-			u.settings.Effort = string(e)
-			if u.effort != nil {
-				u.effort.set(e)
-			}
-			if note != "" {
-				dialog.ShowInformation("Effort: "+string(e), note, u.win)
-			}
+			dialog.ShowInformation("Effort: "+string(e), note, u.win)
 		})
 	}()
+}
+
+func (u *UI) showEffortLevel(e live.Effort) {
+	u.settings.Effort = string(e)
+	if u.effort != nil {
+		u.effort.set(e)
+	}
 }
 
 // showEffort opens the level selector: ←/→ move, Enter applies, Esc

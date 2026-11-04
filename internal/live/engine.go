@@ -74,6 +74,9 @@ type Options struct {
 	MaxHold time.Duration
 	// ApprovalTTL is how long an opportunity waits for the user (default 10 s).
 	ApprovalTTL time.Duration
+	// MaxTrade caps the capital of one new position, in minor units (0 =
+	// no cap).
+	MaxTrade int64
 	// SkipApproval opens entries without asking. Tests only: the
 	// applications never set it.
 	SkipApproval bool
@@ -149,6 +152,8 @@ type command struct {
 	kind    string // reevaluate, execution, profile, reset, approve, reject, focus, pace
 	profile profile.Profile
 	pace    Pace
+	amount  int64
+	reply   chan error
 	on      bool
 	id      string
 	focus   loop.PriceKey
@@ -201,6 +206,7 @@ type Engine struct {
 	approved   map[oppKey]bool // set only during the advance that follows Approve
 	oppSeq     int
 
+	maxTrade    int64         // Options.MaxTrade, then SetMaxTrade
 	snapEvery   time.Duration // snapshot throttle (Options.SnapshotEvery, then SetPace)
 	reevalEvery time.Duration // full re-evaluation period (Config.ReevaluateEvery, then SetPace)
 	paceChanged bool          // the ticker must be reset to snapEvery
@@ -258,6 +264,7 @@ func New(o Options) (*Engine, error) {
 		suppressed: map[oppKey]bool{},
 		approved:   map[oppKey]bool{},
 
+		maxTrade:    o.MaxTrade,
 		snapEvery:   o.SnapshotEvery,
 		reevalEvery: o.Config.ReevaluateEvery.Duration,
 	}
@@ -321,6 +328,33 @@ func (e *Engine) SetFocus(k loop.PriceKey) { e.send(command{kind: "focus", focus
 // evaluation runs (see Effort). It never delays exits: prices, stops and
 // candle closes are still handled as they arrive.
 func (e *Engine) SetPace(p Pace) { e.send(command{kind: "pace", pace: p}) }
+
+// SetMaxTrade changes the cap of one new position, in minor units (0 = no
+// cap). Open positions are not resized.
+func (e *Engine) SetMaxTrade(cents int64) { e.send(command{kind: "maxtrade", amount: cents}) }
+
+// ErrNotEnoughCash is returned by Deposit when a withdrawal exceeds the
+// ledger's free cash (the money not committed to open positions).
+var ErrNotEnoughCash = errors.New("not enough free cash in the ledger")
+
+// Deposit adds cents to the ledger's free cash (negative: withdraws them),
+// as when the bot account is funded or emptied. Positions are untouched.
+// It blocks until the engine has applied it, so a withdrawal can reserve
+// the money before it leaves the account.
+func (e *Engine) Deposit(ctx context.Context, cents int64) error {
+	c := command{kind: "deposit", amount: cents, reply: make(chan error, 1)}
+	select {
+	case e.cmds <- c:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-c.reply:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 func (e *Engine) send(c command) {
 	select {
@@ -590,6 +624,7 @@ func (e *Engine) advance() {
 func (e *Engine) rules(p profile.Profile) loop.Rules {
 	r := loop.RulesFor(p)
 	r.MaxHold = e.opts.MaxHold
+	r.MaxAmount = e.maxTrade
 	r.CostBps = e.costs
 	return r
 }
@@ -820,8 +855,44 @@ func (e *Engine) onCommand(c command) {
 		e.focus = c.focus
 	case "pace":
 		e.setPace(c.pace)
+	case "maxtrade":
+		e.maxTrade = max(c.amount, 0)
+		e.info(fmt.Sprintf("max per trade: %s", output.Money(e.maxTrade)))
+		if e.evOK {
+			e.advance() // pending opportunities show the new amount
+		}
+	case "deposit":
+		c.reply <- e.deposit(c.amount)
 	}
 	e.publish()
+}
+
+// FreeCash is the ledger money not committed to positions. Before the
+// first executed cycle, the ledger is still the profile's capital.
+func (e *Engine) freeCash() int64 {
+	if e.state.Cycle == 0 {
+		return e.profile.Capital
+	}
+	return e.state.Cash
+}
+
+func (e *Engine) deposit(cents int64) error {
+	if cents < 0 && -cents > e.freeCash() {
+		return fmt.Errorf("%w: %s asked, %s free", ErrNotEnoughCash, output.Money(-cents), output.Money(e.freeCash()))
+	}
+	if e.state.Cycle == 0 {
+		e.profile.Capital += cents
+	} else {
+		e.state.Cash += cents
+		e.state.UpdatedAt = e.now
+	}
+	verb := "deposit"
+	if cents < 0 {
+		verb = "withdrawal"
+	}
+	e.info(fmt.Sprintf("%s of %s: free cash now %s", verb, output.Money(max(cents, -cents)), output.Money(e.freeCash())))
+	e.save()
+	return nil
 }
 
 func (e *Engine) setPace(p Pace) {

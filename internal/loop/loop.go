@@ -194,6 +194,9 @@ type Rules struct {
 	// not opened but returned as an OrderProposal, cash untouched. Nil
 	// allows every entry. Exits are never gated.
 	AllowOpen func(market, strategy, symbol string, direction int) bool `json:"-"`
+	// MaxAmount caps the capital committed to one new position, in minor
+	// units (0 = no cap): the bot never puts more than this in one trade.
+	MaxAmount int64 `json:"max_amount,omitempty"`
 	// CostBps is the trading cost per side (fees + slippage) of each
 	// market, in basis points. It is charged when a position closes, for
 	// both sides. Missing: no cost (the CLI cycle, whose costs are in the
@@ -301,8 +304,9 @@ func CheckStops(prev State, prices Prices, rules Rules, now time.Time) (State, [
 //
 // Exit conditions, checked in order: stop-loss or max hold; (market,
 // strategy) no longer selected; signal direction changed. Kept positions are
-// not resized. New positions are funded from cash only, in rank order, and
-// only when rules.AllowOpen accepts them (otherwise: OrderProposal).
+// not resized. New positions are funded from cash only, in rank order, at
+// most rules.MaxAmount each, and only when rules.AllowOpen accepts them
+// (otherwise: OrderProposal).
 func Advance(prev State, initialCash int64, actions []output.Action, prices Prices, rules Rules, now time.Time) (State, []output.Order, error) {
 	next := State{Cycle: prev.Cycle + 1, UpdatedAt: now, Cash: prev.Cash, Trades: slices.Clip(prev.Trades)}
 	if prev.Cycle == 0 {
@@ -364,6 +368,9 @@ func Advance(prev State, initialCash int64, actions []output.Action, prices Pric
 				continue
 			}
 			amt := min(s.Allocation, next.Cash)
+			if rules.MaxAmount > 0 {
+				amt = min(amt, rules.MaxAmount)
+			}
 			if amt <= 0 {
 				continue
 			}

@@ -24,6 +24,11 @@ func (u *UI) applyWallet(w WalletView) {
 	}
 	if w.Devnet {
 		objs = append(objs, u.devnetWallet(w)...)
+		if m := w.Main; m != nil && m.Locked && !u.unlockAsked && !u.hidden {
+			// Once per session: the main account signs the bot's funding.
+			u.unlockAsked = true
+			u.showUnlock(nil)
+		}
 	} else {
 		objs = append(objs, u.publicWallet(w)...)
 	}
@@ -97,52 +102,6 @@ func (u *UI) publicWallet(w WalletView) []fyne.CanvasObject {
 	})
 	remove.Importance = widget.LowImportance
 	return append(objs, container.NewHBox(change, remove))
-}
-
-func (u *UI) devnetWallet(w WalletView) []fyne.CanvasObject {
-	fg := themeColor(theme.ColorNameForeground)
-	muted := themeColor(colorMuted)
-	objs := u.walletHeader(text("DEVNET WALLET · TEST SOL", 11, true, muted))
-	objs = append(objs, u.walletBody(w, fg, muted)...)
-	copyBtn := widget.NewButtonWithIcon("Copy address", theme.ContentCopyIcon(), func() {
-		u.app.Clipboard().SetContent(w.Address)
-	})
-	copyBtn.Importance = widget.LowImportance
-	airdrop := widget.NewButtonWithIcon("Airdrop 1 SOL", theme.DownloadIcon(), nil)
-	airdrop.OnTapped = func() {
-		airdrop.Disable()
-		go func() {
-			err := u.be.Airdrop()
-			fyne.Do(func() {
-				airdrop.Enable()
-				if err != nil {
-					showError(u, err)
-				}
-			})
-		}()
-	}
-	sync := widget.NewButtonWithIcon("Sync ledger", theme.ViewRefreshIcon(), func() {
-		confirm(u, "Sync the devnet ledger?",
-			"The bot's ledger restarts from this wallet's current value (devnet SOL at the real SOL price).\nIts open positions and history are discarded.", func() {
-				go func() {
-					err := u.be.SyncLedger()
-					fyne.Do(func() {
-						if err != nil {
-							showError(u, err)
-							return
-						}
-						u.settings = u.be.Settings()
-						u.refreshMode()
-					})
-				}()
-			})
-	})
-	sync.Importance = widget.HighImportance
-	hint := widget.NewLabel("Devnet SOL has no value. Approved entries are executed at the real Binance price in a local ledger funded from this wallet.")
-	hint.Wrapping = fyne.TextWrapWord
-	hint.SizeName = theme.SizeNameCaptionText
-	hint.Importance = widget.LowImportance
-	return append(objs, container.NewGridWithColumns(2, airdrop, sync), copyBtn, hint)
 }
 
 func (u *UI) walletHeader(title fyne.CanvasObject) []fyne.CanvasObject {

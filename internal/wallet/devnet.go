@@ -44,25 +44,11 @@ func LoadOrCreateKeypair(path string) (Keypair, error) {
 	if err != nil {
 		return Keypair{}, err
 	}
-	var b []byte
-	var ints []int
-	if err := json.Unmarshal(raw, &ints); err != nil {
-		return Keypair{}, fmt.Errorf("%s: not a Solana keypair file: %w", path, err)
+	kp, err := parseKeypairJSON(raw)
+	if err != nil {
+		return Keypair{}, fmt.Errorf("%s: %w", path, err)
 	}
-	for _, v := range ints {
-		if v < 0 || v > 255 {
-			return Keypair{}, fmt.Errorf("%s: not a Solana keypair file", path)
-		}
-		b = append(b, byte(v))
-	}
-	if len(b) != ed25519.PrivateKeySize {
-		return Keypair{}, fmt.Errorf("%s: keypair has %d bytes, want %d", path, len(b), ed25519.PrivateKeySize)
-	}
-	priv := ed25519.NewKeyFromSeed(b[:ed25519.SeedSize])
-	if !priv.Public().(ed25519.PublicKey).Equal(ed25519.PublicKey(b[ed25519.SeedSize:])) {
-		return Keypair{}, fmt.Errorf("%s: public key does not match the secret key", path)
-	}
-	return Keypair{Private: priv}, nil
+	return kp, nil
 }
 
 func createKeypair(path string) (Keypair, error) {

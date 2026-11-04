@@ -48,6 +48,8 @@ type Settings struct {
 	ApprovalSeconds int `json:"approval_seconds,omitempty"`
 	// MaxHoldSeconds closes a position held this long.
 	MaxHoldSeconds int `json:"max_hold_seconds,omitempty"`
+	// MaxTradeCents is the most the bot puts in one trade, in US cents.
+	MaxTradeCents int64 `json:"max_trade_cents,omitempty"`
 	// Effort is the performance level (see live.Efforts).
 	Effort string `json:"effort,omitempty"`
 }
@@ -68,9 +70,12 @@ type HoldingView struct {
 	Priced bool
 }
 
-// WalletView is the state of the wallet shown in the wallet card.
+// WalletView is the state of the wallet shown in the wallet card. In devnet
+// mode, it is the bot account, and Main is the user's main account.
 type WalletView struct {
 	Devnet   bool // the app's devnet wallet (test SOL, no value)
+	Main     *WalletView
+	Locked   bool // main account: its key is not decrypted
 	Address  string
 	Holdings []HoldingView
 	Total    float64
@@ -108,8 +113,26 @@ type Backend interface {
 
 	SetWalletMode(mode string) error
 	SetWallet(address string) error
-	// Airdrop asks the devnet faucet for 1 test SOL.
-	Airdrop() error
+	// Airdrop asks the devnet faucet for 1 test SOL, for the main account
+	// or the bot account.
+	Airdrop(toMain bool) error
+
+	// ImportMain saves the user's main account (recovery phrase, base58
+	// private key or Solana CLI keypair), encrypted with password, and
+	// keeps it unlocked. It returns its address.
+	ImportMain(secret, password string, account uint32) (string, error)
+	UnlockMain(password string) error
+	LockMain()
+	ForgetMain() error
+	// TransferFee estimates the network fee of a transfer, in lamports.
+	TransferFee(toBot bool, lamports uint64) (uint64, error)
+	// FundBot moves devnet SOL from the main account to the bot account
+	// and credits the ledger; WithdrawToMain does the reverse, from the
+	// ledger's free cash. Both return the transaction signature.
+	FundBot(lamports uint64) (string, error)
+	WithdrawToMain(lamports uint64) (string, error)
+	// SetMaxTrade changes the most the bot puts in one trade, in cents.
+	SetMaxTrade(cents int64) error
 	// SyncLedger restarts the ledger from the devnet wallet's value (the
 	// profile budget in demo).
 	SyncLedger() error

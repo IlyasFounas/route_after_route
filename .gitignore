@@ -8,3 +8,4 @@ state.json
 *.tar.xz
 devnet-wallet.json
 devnet-ledger.json
+main-wallet.json

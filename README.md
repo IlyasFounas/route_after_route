@@ -103,12 +103,15 @@ The start of a word is enough (`t`, `hist`), and the line under the prompt tells
   - **Public wallet**: paste the **public address** of a Solana wallet (Phantom, Solflare, Backpack…) to follow its value. The app values SOL and the known tokens (USDC, USDT, EURC, JUP, BONK…) in dollars.
     - It is read-only: never paste a secret phrase or a private key, the app does not need one.
     - In this mode the bot never trades: the algorithm only advises and notifies.
-  - **Devnet**: the app generates a dedicated Solana **devnet** wallet. Devnet SOL is test money with no value.
-    - **Airdrop 1 SOL** asks the devnet faucet for test SOL. It is rate-limited: if it refuses, request some on [faucet.solana.com](https://faucet.solana.com) with the address shown.
-    - **Sync ledger** funds the bot's **devnet ledger** with the wallet's value, counting devnet SOL at the real SOL price.
+  - **Devnet**: two accounts, so that the bot can never touch more than you give it. Devnet SOL is test money with no value.
+    - The **main account** is your own wallet. **Import your wallet** takes its recovery phrase (Phantom, Solflare, Backpack: 12 or 24 words, on their usual path `m/44'/501'/0'/0'`), a base58 private key, or a Solana CLI keypair. The address it gives is shown **before** anything is saved: check that it is yours. The secret is encrypted on your computer with a password (AES-256-GCM, PBKDF2-SHA256 with 600,000 rounds) and is never sent anywhere. The app asks for the password once per launch to **unlock** it; **Lock** forgets it again. Use a wallet made for testing.
+    - The **bot account** is a wallet the app generates. **Fund bot** sends test SOL from the main account to it (a real devnet transaction, shown before you confirm it), and its value is added to the bot's ledger. **Withdraw** sends it back, from the ledger's free cash only. Withdrawing does not need the password.
+    - **Airdrop** asks the devnet faucet for 1 test SOL. It is rate-limited: if it refuses, request some on [faucet.solana.com](https://faucet.solana.com) with the address shown.
+    - **Sync ledger** restarts the bot's ledger from the bot account's value, counting devnet SOL at the real SOL price.
     - Approved entries are executed in that ledger at the real Binance price. No devnet exchange has real liquidity, so there is no on-chain swap yet.
+    - Transfers only go through on devnet (or testnet): the app checks the cluster's genesis hash, whatever the RPC address says.
 - **Allow the bot to trade** with the switch, in devnet only. It is **off by default**. Even when it is on, every entry still waits for your approval. Turning it off stops everything immediately, stop-loss included.
-- **Settings** (gear icon): your risk tolerance, the approval window, the maximum holding time, and optional Solana mainnet and devnet RPC endpoints.
+- **Settings** (gear icon): your risk tolerance, the approval window, the maximum holding time, the **max per trade** (the most the bot puts in one trade, $20 by default), and optional Solana mainnet and devnet RPC endpoints.
 
 ### Historic
 
@@ -157,10 +160,11 @@ On first launch, the app creates its files in your user config directory:
 
 | File | Content |
 |---|---|
-| `settings.json` | your choices in the app: favorites, shown crypto, chart period, bot permission, wallet mode and address, ledger capital, approval window, max hold |
+| `settings.json` | your choices in the app: favorites, shown crypto, chart period, bot permission, wallet mode and address, ledger capital, approval window, max hold, max per trade, effort |
 | `profile.json` | your risk tolerance, also editable from the settings |
 | `config.json` | the strategies, backtest settings and policy used by the algorithm (advanced) |
-| `devnet-wallet.json` | the devnet test wallet's key pair, in the Solana CLI format (readable only by you) |
+| `devnet-wallet.json` | the bot account's key pair, in the Solana CLI format (readable only by you) |
+| `main-wallet.json` | your imported main account, encrypted with your password (readable only by you) |
 | `devnet-ledger.json` | the bot's devnet ledger and the history of its closed trades, saved after every order |
 | `logos/` | the crypto logos, downloaded once from Binance's CDN (display only; without them, letter badges are shown) |
 | `demo/` | an offline replay of synthetic markets, used by `rar-desktop --demo` |

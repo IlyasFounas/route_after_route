@@ -48,6 +48,8 @@ func (u *UI) showSettings() {
 	approval.SetText(strconv.Itoa(st.ApprovalSeconds))
 	maxHold := widget.NewEntry()
 	maxHold.SetText(strconv.Itoa(st.MaxHoldSeconds))
+	maxTrade := widget.NewEntry()
+	maxTrade.SetText(strconv.FormatFloat(float64(st.MaxTradeCents)/100, 'f', -1, 64))
 
 	rpc := widget.NewEntry()
 	rpc.SetPlaceHolder(wallet.DefaultSolanaRPC)
@@ -64,6 +66,7 @@ func (u *UI) showSettings() {
 		{Text: "Risk tolerance", Widget: container.NewVBox(risk, riskLabel)},
 		{Text: "Approval window (s)", Widget: approval, HintText: fmt.Sprintf("How long an opportunity waits for your answer (%d–%d s).", MinApprovalSeconds, MaxApprovalSeconds)},
 		{Text: "Max hold (s)", Widget: maxHold, HintText: fmt.Sprintf("A position is closed automatically after this time (%d–%d s).", MinMaxHoldSeconds, MaxMaxHoldSeconds)},
+		{Text: "Max per trade ($)", Widget: maxTrade, HintText: "The most the bot puts in one trade, whatever the ledger holds."},
 		{Text: "Solana RPC", Widget: rpc, HintText: "Optional: your own mainnet endpoint for the public wallet."},
 		{Text: "Devnet RPC", Widget: devRPC, HintText: "Optional: your own devnet endpoint."},
 		{Text: "Files", Widget: folder},
@@ -78,7 +81,7 @@ func (u *UI) showSettings() {
 				}()
 			})
 		})
-		items = append(items[:3], append([]*widget.FormItem{{Text: "", Widget: reset}}, items[3:]...)...)
+		items = append(items[:4], append([]*widget.FormItem{{Text: "", Widget: reset}}, items[4:]...)...)
 	}
 	d := dialog.NewForm("Settings", "Save", "Cancel", items, func(ok bool) {
 		if !ok {
@@ -89,10 +92,18 @@ func (u *UI) showSettings() {
 			dialog.ShowError(err, u.win)
 			return
 		}
+		mt, err := parseMoney(maxTrade.Text)
+		if err != nil || mt < 100 {
+			dialog.ShowError(errors.New("max per trade: an amount of at least $1"), u.win)
+			return
+		}
 		r, main, dev := int(risk.Value), rpc.Text, devRPC.Text
 		timingChanged := ap != st.ApprovalSeconds || mh != st.MaxHoldSeconds
 		go func() {
 			errs := []error{u.be.SetRiskTolerance(r), u.be.SetRPCs(main, dev)}
+			if mt != st.MaxTradeCents {
+				errs = append(errs, u.be.SetMaxTrade(mt))
+			}
 			if timingChanged {
 				errs = append(errs, u.be.SetTiming(ap, mh))
 			}

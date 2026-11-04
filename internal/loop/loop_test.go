@@ -204,3 +204,31 @@ func TestTradesHistoryAndCosts(t *testing.T) {
 		t.Fatalf("%+v", st3.Trades)
 	}
 }
+
+func TestMaxAmountCapsEachEntry(t *testing.T) {
+	two := output.Action{Rank: 1, Market: "m", Strategy: "s", Signals: []output.SymbolSignal{
+		{Symbol: "X", Direction: output.Long, Allocation: 600, Price: 10},
+		{Symbol: "Y", Direction: output.Short, Allocation: 300, Price: 5},
+	}}
+	prices := Prices{{"m", "X"}: 10, {"m", "Y"}: 5}
+	s, orders, err := Advance(State{}, 1000, []output.Action{two}, prices, Rules{StopLoss: 0.1, MaxAmount: 250}, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Positions) != 2 || s.Positions[0].Amount != 250 || s.Positions[1].Amount != 250 || s.Cash != 500 {
+		t.Fatalf("each entry must be capped at 250: %+v", s)
+	}
+	// Proposals carry the capped amount too: it is what the user approves.
+	gate := Rules{StopLoss: 0.1, MaxAmount: 250, AllowOpen: func(string, string, string, int) bool { return false }}
+	_, orders, _ = Advance(State{}, 1000, []output.Action{two}, prices, gate, t0)
+	for _, o := range orders {
+		if o.Kind != output.OrderProposal || o.Amount != 250 {
+			t.Fatalf("proposal %+v", o)
+		}
+	}
+	// No cap: the allocation as before.
+	s, _, _ = Advance(State{}, 1000, []output.Action{two}, prices, Rules{StopLoss: 0.1}, t0)
+	if s.Positions[0].Amount != 600 {
+		t.Fatalf("uncapped: %+v", s.Positions[0])
+	}
+}
