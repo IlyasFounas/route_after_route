@@ -64,8 +64,15 @@ func TestParamValidation(t *testing.T) {
 }
 
 func TestCheck(t *testing.T) {
-	s, _ := New(SMACrossID, nil)
-	if r := Check(s.Spec(), market.Descriptor{Granularity: market.Minute, Kind: market.KindCrypto}, 100); len(r) != 1 {
+	spec := Spec{ID: "hourly_only", Requires: Requirements{Granularities: []market.Granularity{market.Hour}}}
+	if r := Check(spec, market.Descriptor{Granularity: market.Minute, Kind: market.KindCrypto}, 100); len(r) != 1 {
 		t.Fatalf("minute granularity should be rejected, got %v", r)
+	}
+	// The catalogue works on second-level candles (trades last seconds).
+	for _, id := range IDs() {
+		s, _ := New(id, nil)
+		if r := Check(s.Spec(), market.Descriptor{Granularity: market.Second, Kind: market.KindCrypto}, 1_000_000); len(r) != 0 {
+			t.Errorf("%s rejects 1s candles: %v", id, r)
+		}
 	}
 }

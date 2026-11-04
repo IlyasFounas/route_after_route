@@ -27,6 +27,40 @@ type Market interface {
 	Bars(ctx context.Context, symbol string, from, to time.Time) ([]Bar, error)
 }
 
+// Update is a real-time observation pushed by a Streamer. While Closed is
+// false, Bar is the candle still forming (its values change on every
+// update); the final update of a candle has Closed set to true.
+type Update struct {
+	Market string
+	Symbol string
+	Bar    Bar
+	Closed bool
+}
+
+// Streamer is an OPTIONAL interface a Market may implement to push real-time
+// updates. Callers detect it with a type assertion; markets without it are
+// polled through Bars.
+type Streamer interface {
+	// Stream sends updates for symbols to out until ctx is cancelled or a
+	// non-recoverable error occurs. Implementations reconnect on their own
+	// after transient failures and report status changes on status (which
+	// may be nil). Stream must not close out.
+	Stream(ctx context.Context, symbols []string, out chan<- Update, status func(StreamStatus)) error
+}
+
+// StreamStatus describes the health of a stream.
+type StreamStatus struct {
+	State string // "connecting", "connected", "reconnecting", "finished"
+	Err   error
+}
+
+const (
+	StreamConnecting   = "connecting"
+	StreamConnected    = "connected"
+	StreamReconnecting = "reconnecting"
+	StreamFinished     = "finished"
+)
+
 // Bar is one OHLCV observation. Time is the bar's opening timestamp (UTC).
 type Bar struct {
 	Time   time.Time `json:"time"`
@@ -41,19 +75,25 @@ type Bar struct {
 type Granularity string
 
 const (
-	Minute    Granularity = "1m"
-	Hour      Granularity = "1h"
-	FourHours Granularity = "4h"
-	Day       Granularity = "1d"
-	Week      Granularity = "1w"
+	Second         Granularity = "1s"
+	Minute         Granularity = "1m"
+	FiveMinutes    Granularity = "5m"
+	FifteenMinutes Granularity = "15m"
+	Hour           Granularity = "1h"
+	FourHours      Granularity = "4h"
+	Day            Granularity = "1d"
+	Week           Granularity = "1w"
 )
 
 var granularities = map[Granularity]time.Duration{
-	Minute:    time.Minute,
-	Hour:      time.Hour,
-	FourHours: 4 * time.Hour,
-	Day:       24 * time.Hour,
-	Week:      7 * 24 * time.Hour,
+	Second:         time.Second,
+	Minute:         time.Minute,
+	FiveMinutes:    5 * time.Minute,
+	FifteenMinutes: 15 * time.Minute,
+	Hour:           time.Hour,
+	FourHours:      4 * time.Hour,
+	Day:            24 * time.Hour,
+	Week:           7 * 24 * time.Hour,
 }
 
 func (g Granularity) Valid() bool { _, ok := granularities[g]; return ok }

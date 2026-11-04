@@ -1,0 +1,94 @@
+name: Release
+
+# Push a tag like v0.1.0 (or v0.1.0-rc1 for a pre-release) to publish
+# ready-to-run executables on the GitHub release page.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  FYNE_TOOLS_VERSION: v1.7.4
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=(--title "$GITHUB_REF_NAME" --generate-notes)
+          [[ "$GITHUB_REF_NAME" == *-* ]] && flags+=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" "${flags[@]}"
+
+  desktop:
+    needs: create
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: linux, goarch: amd64, asset: route_after_route-linux-amd64.tar.xz }
+          - { os: macos-latest, target: darwin, goarch: arm64, asset: route_after_route-macos-arm64.zip }
+          - { os: macos-latest, target: darwin, goarch: amd64, asset: route_after_route-macos-amd64.zip }
+          - { os: windows-latest, target: windows, goarch: amd64, asset: route_after_route-windows-amd64.zip }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install Fyne system dependencies
+        if: matrix.target == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev
+      - name: Install the fyne packaging tool
+        run: go install fyne.io/tools/cmd/fyne@${FYNE_TOOLS_VERSION}
+      - name: Package
+        working-directory: cmd/rar-desktop
+        env:
+          CGO_ENABLED: "1"
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          version="${version%%-*}"   # fyne wants x.y.z
+          fyne package --target ${{ matrix.target }} --release --app-version "$version" --app-build "${GITHUB_RUN_NUMBER}"
+      - name: Archive
+        working-directory: cmd/rar-desktop
+        run: |
+          case "${{ matrix.target }}" in
+            linux)   mv route_after_route.tar.xz "../../${{ matrix.asset }}" ;;
+            darwin)  ditto -c -k --keepParent route_after_route.app "../../${{ matrix.asset }}" ;;
+            windows) 7z a "../../${{ matrix.asset }}" route_after_route.exe ;;
+          esac
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" "${{ matrix.asset }}" --clobber
+
+  cli:
+    needs: create
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build the CLI for every platform
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          for target in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64 windows/amd64; do
+            os="${target%/*}"; arch="${target#*/}"; ext=""
+            [ "$os" = windows ] && ext=".exe"
+            GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "-s -w" -o "rar-$os-$arch$ext" ./cmd/rar
+          done
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" rar-* --clobber

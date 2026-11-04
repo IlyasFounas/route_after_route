@@ -76,6 +76,9 @@ const (
 	OrderOpen  = "open"
 	OrderClose = "close"
 	OrderHold  = "hold"
+	// OrderProposal is an entry the loop did not open because it awaits the
+	// user's approval (live engine). It changes nothing in the portfolio.
+	OrderProposal = "proposal"
 )
 
 // Order is a concrete position change the user should carry out.
@@ -181,7 +184,7 @@ func WriteText(w io.Writer, r Report) error {
 	tw = tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	for _, o := range r.Orders {
 		pnl := ""
-		if o.Kind != OrderOpen {
+		if o.Kind != OrderOpen && o.Kind != OrderProposal {
 			pnl = fmt.Sprintf("pnl=%+.2f%%", o.PnL*100)
 		}
 		fmt.Fprintf(tw, "  %s\t%s\t%s/%s\t%s\t%s\t@%g\t%s\t%s\n", strings.ToUpper(o.Kind), o.Direction, o.Market, o.Symbol, o.Strategy, Money(o.Amount), o.Price, pnl, o.Reason)
