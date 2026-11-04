@@ -1,0 +1,28 @@
+{
+  "id": "demo-trend",
+  "name": "Synthetic trending market (deterministic, seed 42)",
+  "kind": "crypto",
+  "granularity": "1d",
+  "fees": {
+    "taker_bps": 10,
+    "maker_bps": 8
+  },
+  "min_capital": 10000,
+  "access": {
+    "short_allowed": true,
+    "requires_account": false,
+    "min_hours_per_week": 0
+  },
+  "symbols": [
+    {
+      "name": "TREND",
+      "listed": "2020-01-01T00:00:00Z"
+    },
+    {
+      "name": "DEAD",
+      "listed": "2020-01-01T00:00:00Z",
+      "delisted": "2021-08-23T00:00:00Z"
+    }
+  ],
+  "data_source": "tools/gendata"
+}

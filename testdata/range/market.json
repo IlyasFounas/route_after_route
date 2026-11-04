@@ -1,0 +1,26 @@
+{
+  "id": "demo-range",
+  "name": "Synthetic range-bound market (deterministic, seed 42)",
+  "kind": "crypto",
+  "granularity": "1d",
+  "fees": {
+    "taker_bps": 10,
+    "maker_bps": 8
+  },
+  "min_capital": 50000,
+  "access": {
+    "short_allowed": true,
+    "requires_account": false,
+    "required_skills": [
+      "statistics"
+    ],
+    "min_hours_per_week": 2
+  },
+  "symbols": [
+    {
+      "name": "RANGE",
+      "listed": "2020-01-01T00:00:00Z"
+    }
+  ],
+  "data_source": "tools/gendata"
+}

@@ -1,0 +1,5 @@
+/rar
+/bin/
+state.json
+*.test
+/internal/profile/testdata/fuzz/

@@ -1,0 +1,277 @@
+{
+  "generated_at": "2022-09-28T00:00:00Z",
+  "cycle": 1,
+  "period": {
+    "from": "2020-01-01T00:00:00Z",
+    "to": "2022-09-27T00:00:00Z"
+  },
+  "profile": {
+    "capital": 1000000,
+    "hours_per_week": 4,
+    "skills": [
+      "technical_analysis",
+      "statistics"
+    ],
+    "risk_tolerance": 5
+  },
+  "criterion": "oos_sharpe",
+  "criterion_doc": "Annualised Sharpe ratio (risk-free rate 0) of walk-forward out-of-sample returns, net of the market's taker fees and the configured slippage, pooled over every symbol tradable during the period, delisted ones included (survivorship-bias guard).",
+  "policy": {
+    "max_active": 3,
+    "rule": "capped",
+    "cap": 0.5,
+    "min_score": 0,
+    "max_drawdown": 0.25
+  },
+  "capital": 1000000,
+  "unallocated": 500000,
+  "portfolio_cash": 875000,
+  "actions": [
+    {
+      "rank": 1,
+      "market": "demo-range",
+      "strategy": "zscore_revert",
+      "allocation": 500000,
+      "weight": 0.5,
+      "score": 2.0600989195881105,
+      "criterion": "oos_sharpe",
+      "trace": {
+        "avg_symbol_total_return": 0.5036132224682166,
+        "costs": 0.17775000000000013,
+        "fee_bps": 10,
+        "folds": 13,
+        "max_drawdown": 0.04092081764236177,
+        "mean_return": 0.00055721407717723,
+        "oos_periods": 750,
+        "periods_per_year": 365,
+        "sharpe": 2.0600989195881105,
+        "slippage_bps": 5,
+        "stdev_return": 0.005167499432054961,
+        "symbols": 1,
+        "symbols_delisted": 0,
+        "symbols_skipped": 0,
+        "trades": 311,
+        "turnover": 118.5
+      },
+      "signals": [
+        {
+          "symbol": "RANGE",
+          "signal": 0.14023003866213882,
+          "exposure": 0.25,
+          "direction": "long",
+          "allocation": 125000,
+          "price": 98.8743,
+          "trace": {
+            "mean": 101.38847,
+            "stdev": 2.0772340775023026,
+            "z": -1.2103450579932082
+          }
+        }
+      ]
+    }
+  ],
+  "orders": [
+    {
+      "kind": "open",
+      "market": "demo-range",
+      "strategy": "zscore_revert",
+      "symbol": "RANGE",
+      "direction": "long",
+      "amount": 125000,
+      "price": 98.8743,
+      "reason": "rank 1, signal +0.140, exposure +0.25"
+    }
+  ],
+  "candidates": [
+    {
+      "market": "demo-trend",
+      "strategy": "sma_cross",
+      "min_capital": 10000,
+      "score": 0.605244004063684,
+      "trace": {
+        "avg_symbol_total_return": 0.23791755328817843,
+        "costs": 0.12750000000000006,
+        "fee_bps": 10,
+        "folds": 19,
+        "max_drawdown": 0.3028022907321273,
+        "mean_return": 0.0005136736892856119,
+        "oos_periods": 1100,
+        "periods_per_year": 365,
+        "sharpe": 0.605244004063684,
+        "slippage_bps": 5,
+        "stdev_return": 0.016214488682877466,
+        "symbols": 2,
+        "symbols_delisted": 1,
+        "symbols_skipped": 0,
+        "trades": 278,
+        "turnover": 85
+      }
+    },
+    {
+      "market": "demo-trend",
+      "strategy": "sma_cross_fast",
+      "min_capital": 10000,
+      "score": 0.7173631167623604,
+      "trace": {
+        "avg_symbol_total_return": 0.3052251543228449,
+        "costs": 0.1755000000000001,
+        "fee_bps": 10,
+        "folds": 19,
+        "max_drawdown": 0.2733325011058063,
+        "mean_return": 0.0005843713623515285,
+        "oos_periods": 1100,
+        "periods_per_year": 365,
+        "sharpe": 0.7173631167623604,
+        "slippage_bps": 5,
+        "stdev_return": 0.015563107359191693,
+        "symbols": 2,
+        "symbols_delisted": 1,
+        "symbols_skipped": 0,
+        "trades": 385,
+        "turnover": 117
+      }
+    },
+    {
+      "market": "demo-trend",
+      "strategy": "zscore_revert",
+      "min_capital": 10000,
+      "score": -1.4421898928297125,
+      "trace": {
+        "avg_symbol_total_return": -0.28859403035571995,
+        "costs": 0.26325000000000015,
+        "fee_bps": 10,
+        "folds": 19,
+        "max_drawdown": 0.3469136705649628,
+        "mean_return": -0.0005898806049422537,
+        "oos_periods": 1100,
+        "periods_per_year": 365,
+        "sharpe": -1.4421898928297125,
+        "slippage_bps": 5,
+        "stdev_return": 0.007814264397244327,
+        "symbols": 2,
+        "symbols_delisted": 1,
+        "symbols_skipped": 0,
+        "trades": 493,
+        "turnover": 175.5
+      }
+    },
+    {
+      "market": "demo-range",
+      "strategy": "sma_cross",
+      "min_capital": 50000,
+      "score": -3.411075965797848,
+      "trace": {
+        "avg_symbol_total_return": -0.5207791718595544,
+        "costs": 0.06824999999999999,
+        "fee_bps": 10,
+        "folds": 13,
+        "max_drawdown": 0.5234502275082797,
+        "mean_return": -0.0009656536522818889,
+        "oos_periods": 750,
+        "periods_per_year": 365,
+        "sharpe": -3.411075965797848,
+        "slippage_bps": 5,
+        "stdev_return": 0.0054084949463825875,
+        "symbols": 1,
+        "symbols_delisted": 0,
+        "symbols_skipped": 0,
+        "trades": 167,
+        "turnover": 45.5
+      }
+    },
+    {
+      "market": "demo-range",
+      "strategy": "sma_cross_fast",
+      "min_capital": 50000,
+      "score": -3.212798635162257,
+      "trace": {
+        "avg_symbol_total_return": -0.5698268647857738,
+        "costs": 0.10725000000000004,
+        "fee_bps": 10,
+        "folds": 13,
+        "max_drawdown": 0.5730334724833053,
+        "mean_return": -0.0011025670193936874,
+        "oos_periods": 750,
+        "periods_per_year": 365,
+        "sharpe": -3.212798635162257,
+        "slippage_bps": 5,
+        "stdev_return": 0.006556437461754642,
+        "symbols": 1,
+        "symbols_delisted": 0,
+        "symbols_skipped": 0,
+        "trades": 274,
+        "turnover": 71.5
+      }
+    },
+    {
+      "market": "demo-range",
+      "strategy": "zscore_revert",
+      "min_capital": 50000,
+      "score": 2.0600989195881105,
+      "trace": {
+        "avg_symbol_total_return": 0.5036132224682166,
+        "costs": 0.17775000000000013,
+        "fee_bps": 10,
+        "folds": 13,
+        "max_drawdown": 0.04092081764236177,
+        "mean_return": 0.00055721407717723,
+        "oos_periods": 750,
+        "periods_per_year": 365,
+        "sharpe": 2.0600989195881105,
+        "slippage_bps": 5,
+        "stdev_return": 0.005167499432054961,
+        "symbols": 1,
+        "symbols_delisted": 0,
+        "symbols_skipped": 0,
+        "trades": 311,
+        "turnover": 118.5
+      }
+    }
+  ],
+  "rejected_candidates": [
+    {
+      "market": "demo-trend",
+      "strategy": "sma_cross",
+      "score": 0.605244004063684,
+      "reasons": [
+        "max drawdown 30.3% exceeds risk limit 25.0%"
+      ]
+    },
+    {
+      "market": "demo-trend",
+      "strategy": "sma_cross_fast",
+      "score": 0.7173631167623604,
+      "reasons": [
+        "max drawdown 27.3% exceeds risk limit 25.0%"
+      ]
+    },
+    {
+      "market": "demo-trend",
+      "strategy": "zscore_revert",
+      "score": -1.4421898928297125,
+      "reasons": [
+        "score -1.4422 below min_score 0.0000",
+        "max drawdown 34.7% exceeds risk limit 25.0%"
+      ]
+    },
+    {
+      "market": "demo-range",
+      "strategy": "sma_cross",
+      "score": -3.411075965797848,
+      "reasons": [
+        "score -3.4111 below min_score 0.0000",
+        "max drawdown 52.3% exceeds risk limit 25.0%"
+      ]
+    },
+    {
+      "market": "demo-range",
+      "strategy": "sma_cross_fast",
+      "score": -3.212798635162257,
+      "reasons": [
+        "score -3.2128 below min_score 0.0000",
+        "max drawdown 57.3% exceeds risk limit 25.0%"
+      ]
+    }
+  ],
+  "rejected_markets": null
+}
