@@ -1,0 +1,8 @@
+Website = "https://github.com/IlyasFounas/route_after_route"
+
+[Details]
+Icon = "Icon.png"
+Name = "route_after_route"
+ID = "io.github.ilyasfounas.route_after_route"
+Version = "0.1.0"
+Build = 2

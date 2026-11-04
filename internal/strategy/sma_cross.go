@@ -47,8 +47,7 @@ func (s *smaCross) Spec() Spec {
 		Description: "Trend following: long when the fast SMA is above the slow SMA, short (if allowed) below.",
 		Consumes:    []string{"close"},
 		Requires: Requirements{
-			Granularities: []market.Granularity{market.Hour, market.FourHours, market.Day, market.Week},
-			Lookback:      s.slow,
+			Lookback: s.slow,
 		},
 		Params: maps.Clone(s.params),
 	}

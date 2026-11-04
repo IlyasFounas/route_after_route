@@ -18,8 +18,9 @@ import (
 )
 
 const (
-	defaultBaseURL = "https://api.binance.com"
-	pageLimit      = 1000
+	defaultBaseURL   = "https://api.binance.com"
+	defaultStreamURL = "wss://stream.binance.com:9443"
+	pageLimit        = 1000
 )
 
 // Options is the JSON configuration of the adapter.
@@ -27,6 +28,11 @@ type Options struct {
 	Symbols  []string           `json:"symbols"`
 	Interval market.Granularity `json:"interval"`
 	BaseURL  string             `json:"base_url,omitempty"`
+	// StreamURL is the WebSocket endpoint (real-time klines).
+	StreamURL string `json:"stream_url,omitempty"`
+	// ID overrides the market id ("binance-spot"), so that several
+	// instances (e.g. one per watched crypto) can run side by side.
+	ID string `json:"id,omitempty"`
 }
 
 func init() {
@@ -45,9 +51,14 @@ type Market struct {
 	client *http.Client
 	desc   market.Descriptor
 	now    func() time.Time
+	// backoff is the first reconnection delay of Stream.
+	backoff time.Duration
 }
 
-var _ market.Market = (*Market)(nil)
+var (
+	_ market.Market   = (*Market)(nil)
+	_ market.Streamer = (*Market)(nil)
+)
 
 // New builds the adapter. A nil client gets a default one with a timeout.
 func New(o Options, client *http.Client) (*Market, error) {
@@ -64,19 +75,27 @@ func New(o Options, client *http.Client) (*Market, error) {
 		o.BaseURL = defaultBaseURL
 	}
 	o.BaseURL = strings.TrimRight(o.BaseURL, "/")
+	if o.StreamURL == "" {
+		o.StreamURL = defaultStreamURL
+	}
+	o.StreamURL = strings.TrimRight(o.StreamURL, "/")
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	if o.ID == "" {
+		o.ID = "binance-spot"
 	}
 	syms := make([]market.Symbol, len(o.Symbols))
 	for i, s := range o.Symbols {
 		syms[i] = market.Symbol{Name: s}
 	}
 	return &Market{
-		opts:   o,
-		client: client,
-		now:    time.Now,
+		opts:    o,
+		client:  client,
+		now:     time.Now,
+		backoff: time.Second,
 		desc: market.Descriptor{
-			ID:          "binance-spot",
+			ID:          o.ID,
 			Name:        "Binance Spot (public market data)",
 			Kind:        market.KindCrypto,
 			Granularity: o.Interval,

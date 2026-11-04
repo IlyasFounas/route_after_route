@@ -3,3 +3,8 @@
 state.json
 *.test
 /internal/profile/testdata/fuzz/
+/rar-desktop
+/cmd/rar-desktop/rar-desktop
+*.tar.xz
+devnet-wallet.json
+devnet-ledger.json

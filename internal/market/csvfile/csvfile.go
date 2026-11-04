@@ -28,6 +28,16 @@ import (
 // Options is the JSON configuration of the adapter.
 type Options struct {
 	Path string `json:"path"`
+	// Replay, when set, turns the files into a simulated real-time feed:
+	// Bars only returns candles before Start, and Stream plays the following
+	// candles one by one, Interval apart.
+	Replay *ReplayOptions `json:"replay,omitempty"`
+}
+
+// ReplayOptions configures the replay mode.
+type ReplayOptions struct {
+	Start    string `json:"start"`    // YYYY-MM-DD or RFC 3339
+	Interval string `json:"interval"` // Go duration per candle, e.g. "200ms"; "0s" = as fast as possible
 }
 
 func init() {
@@ -43,7 +53,14 @@ func init() {
 		if !filepath.IsAbs(p) {
 			p = filepath.Join(baseDir, p)
 		}
-		return New(p)
+		m, err := New(p)
+		if err != nil || o.Replay == nil {
+			return m, err
+		}
+		if err := m.SetReplay(*o.Replay); err != nil {
+			return nil, fmt.Errorf("options.replay: %w", err)
+		}
+		return m, nil
 	})
 }
 
@@ -51,9 +68,32 @@ func init() {
 type Market struct {
 	dir  string
 	desc market.Descriptor
+
+	replay      bool
+	replayStart time.Time
+	replayEvery time.Duration
 }
 
-var _ market.Market = (*Market)(nil)
+var (
+	_ market.Market   = (*Market)(nil)
+	_ market.Streamer = (*Market)(nil)
+)
+
+// SetReplay enables the replay mode.
+func (m *Market) SetReplay(o ReplayOptions) error {
+	start, err := time.Parse(time.RFC3339, o.Start)
+	if err != nil {
+		if start, err = time.Parse(time.DateOnly, o.Start); err != nil {
+			return fmt.Errorf("invalid start %q", o.Start)
+		}
+	}
+	every, err := time.ParseDuration(o.Interval)
+	if err != nil || every < 0 {
+		return fmt.Errorf("invalid interval %q", o.Interval)
+	}
+	m.replay, m.replayStart, m.replayEvery = true, start.UTC(), every
+	return nil
+}
 
 // New loads <dir>/market.json.
 func New(dir string) (*Market, error) {
@@ -75,7 +115,16 @@ func (m *Market) Descriptor() market.Descriptor { return m.desc }
 
 var header = []string{"time", "open", "high", "low", "close", "volume"}
 
+// Bars returns the stored candles in [from, to). In replay mode, candles
+// from the replay start onwards are "in the future" and never returned.
 func (m *Market) Bars(ctx context.Context, symbol string, from, to time.Time) ([]market.Bar, error) {
+	if m.replay && m.replayStart.Before(to) {
+		to = m.replayStart
+	}
+	return m.read(ctx, symbol, from, to)
+}
+
+func (m *Market) read(ctx context.Context, symbol string, from, to time.Time) ([]market.Bar, error) {
 	if !m.desc.HasSymbol(symbol) {
 		return nil, fmt.Errorf("unknown symbol %q", symbol)
 	}
@@ -143,4 +192,96 @@ func parseRecord(rec []string) (market.Bar, error) {
 		}
 	}
 	return market.Bar{Time: t.UTC(), Open: v[0], High: v[1], Low: v[2], Close: v[3], Volume: v[4]}, nil
+}
+
+// Stream plays the candles from the replay start onwards, in time order
+// across symbols. Each candle is sent twice: once forming (halfway between
+// open and close), then closed. Without replay mode, there is nothing to
+// stream and Stream returns immediately.
+func (m *Market) Stream(ctx context.Context, symbols []string, out chan<- market.Update, status func(market.StreamStatus)) error {
+	report := func(state string) {
+		if status != nil {
+			status(market.StreamStatus{State: state})
+		}
+	}
+	if !m.replay {
+		report(market.StreamFinished)
+		return nil
+	}
+	future := map[string][]market.Bar{}
+	var times []time.Time
+	for _, s := range symbols {
+		bars, err := m.read(ctx, s, m.replayStart, time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC))
+		if err != nil {
+			return err
+		}
+		future[s] = bars
+		for _, b := range bars {
+			times = append(times, b.Time)
+		}
+	}
+	slices.SortFunc(times, func(a, b time.Time) int { return a.Compare(b) })
+	times = slices.CompactFunc(times, func(a, b time.Time) bool { return a.Equal(b) })
+
+	send := func(u market.Update) error {
+		select {
+		case out <- u:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	wait := func(d time.Duration) error {
+		if d <= 0 {
+			return ctx.Err()
+		}
+		select {
+		case <-time.After(d):
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	report(market.StreamConnected)
+	next := map[string]int{}
+	for _, t := range times {
+		var step []market.Update
+		for _, s := range symbols {
+			i := next[s]
+			if i < len(future[s]) && future[s][i].Time.Equal(t) {
+				step = append(step, market.Update{Market: m.desc.ID, Symbol: s, Bar: future[s][i], Closed: true})
+				next[s] = i + 1
+			}
+		}
+		for _, u := range step {
+			if err := send(forming(u)); err != nil {
+				return err
+			}
+		}
+		if err := wait(m.replayEvery / 2); err != nil {
+			return err
+		}
+		for _, u := range step {
+			if err := send(u); err != nil {
+				return err
+			}
+		}
+		if err := wait(m.replayEvery - m.replayEvery/2); err != nil {
+			return err
+		}
+	}
+	report(market.StreamFinished)
+	return nil
+}
+
+// forming returns the half-built version of a closed candle.
+func forming(u market.Update) market.Update {
+	b := u.Bar
+	mid := (b.Open + b.Close) / 2
+	b.Close = mid
+	b.High = max(b.Open, mid)
+	b.Low = min(b.Open, mid)
+	b.Volume /= 2
+	u.Bar, u.Closed = b, false
+	return u
 }

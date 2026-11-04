@@ -25,6 +25,9 @@ var allowed = map[string][]string{
 	"arbiter":  {},
 	"output":   {"profile", "market", "arbiter"},
 	"loop":     {"profile", "output"},
+	"live":     {"app", "market", "strategy", "eval", "arbiter", "output", "loop", "profile"},
+	"gui":      {"live", "output", "loop", "market", "profile", "arbiter", "wallet"},
+	"wallet":   {},
 }
 
 func TestLayerImports(t *testing.T) {

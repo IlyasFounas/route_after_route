@@ -46,11 +46,13 @@ type StrategyConfig struct {
 }
 
 // PeriodConfig is the evaluated history window. Dates are YYYY-MM-DD or
-// RFC 3339. "to" defaults to now; give either "from" or "lookback_days".
+// RFC 3339. "to" defaults to now; give one of "from", "lookback_days" or
+// "lookback" (a Go duration such as "2h", for second-level candles).
 type PeriodConfig struct {
-	From         string `json:"from,omitempty"`
-	To           string `json:"to,omitempty"`
-	LookbackDays int    `json:"lookback_days,omitempty"`
+	From         string   `json:"from,omitempty"`
+	To           string   `json:"to,omitempty"`
+	LookbackDays int      `json:"lookback_days,omitempty"`
+	Lookback     Duration `json:"lookback,omitzero"`
 }
 
 // BacktestConfig holds the user-tunable execution assumptions.
@@ -112,7 +114,9 @@ func LoadConfig(path string) (Config, error) {
 		Period map[string]json.RawMessage `json:"period"`
 	}
 	_ = json.Unmarshal(raw, &probe)
-	if _, ok := probe.Period["from"]; ok {
+	_, hasFrom := probe.Period["from"]
+	_, hasLookback := probe.Period["lookback"]
+	if hasFrom || hasLookback {
 		cfg.Period.LookbackDays = 0
 	}
 	if err := market.DecodeStrict(raw, &cfg); err != nil {
@@ -131,8 +135,17 @@ func (c Config) Validate() error {
 	if len(c.Markets) == 0 {
 		errs = append(errs, errors.New("at least one market must be selected"))
 	}
-	if c.Period.From != "" && c.Period.LookbackDays > 0 {
-		errs = append(errs, errors.New("period: give either from or lookback_days, not both"))
+	set := 0
+	for _, ok := range []bool{c.Period.From != "", c.Period.LookbackDays > 0, c.Period.Lookback.Duration > 0} {
+		if ok {
+			set++
+		}
+	}
+	if set > 1 {
+		errs = append(errs, errors.New("period: give only one of from, lookback_days or lookback"))
+	}
+	if c.Period.Lookback.Duration < 0 {
+		errs = append(errs, errors.New("period: lookback must be >= 0"))
 	}
 	if c.Period.LookbackDays < 0 {
 		errs = append(errs, errors.New("period: lookback_days must be >= 0"))
@@ -181,8 +194,10 @@ func (p PeriodConfig) Resolve(now time.Time) (from, to time.Time, err error) {
 		}
 	case p.LookbackDays > 0:
 		from = to.AddDate(0, 0, -p.LookbackDays)
+	case p.Lookback.Duration > 0:
+		from = to.Add(-p.Lookback.Duration)
 	default:
-		return from, to, errors.New("period: from or lookback_days is required")
+		return from, to, errors.New("period: from, lookback_days or lookback is required")
 	}
 	if !from.Before(to) {
 		err = fmt.Errorf("period: from (%s) must be before to (%s)", from.Format(time.DateOnly), to.Format(time.DateOnly))

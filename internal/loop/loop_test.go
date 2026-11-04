@@ -74,3 +74,133 @@ func TestDue(t *testing.T) {
 		t.Fatal("should be due")
 	}
 }
+
+func TestCheckStopsAndCooldown(t *testing.T) {
+	rules := Rules{StopLoss: 0.1}
+	prev := State{Cycle: 2, Cash: 0, Positions: []Position{
+		{Market: "m", Strategy: "s", Symbol: "X", Direction: 1, Amount: 1000, EntryPrice: 100},
+		{Market: "m", Strategy: "s", Symbol: "Y", Direction: 1, Amount: 1000, EntryPrice: 100},
+	}}
+	s, orders := CheckStops(prev, Prices{{"m", "X"}: 85, {"m", "Y"}: 99}, rules, t0)
+	if len(orders) != 1 || orders[0].Symbol != "X" || len(s.Positions) != 1 || s.Cash != 850 {
+		t.Fatalf("CheckStops: %+v %+v", s, orders)
+	}
+	if len(prev.Positions) != 2 {
+		t.Fatal("CheckStops must not mutate its input")
+	}
+	// Next candle: X still long → no re-entry, cooldown kept.
+	acts := []output.Action{{Rank: 1, Market: "m", Strategy: "s", Signals: []output.SymbolSignal{
+		{Symbol: "X", Direction: output.Long, Allocation: 500, Price: 86},
+		{Symbol: "Y", Direction: output.Long, Allocation: 500, Price: 99},
+	}}}
+	s2, orders, _ := Advance(s, 0, acts, Prices{{"m", "X"}: 86, {"m", "Y"}: 99}, rules, t0)
+	for _, o := range orders {
+		if o.Kind == output.OrderOpen {
+			t.Fatalf("re-entry during cooldown: %+v", o)
+		}
+	}
+	if len(s2.Cooldown) != 1 {
+		t.Fatalf("cooldown should persist, got %+v", s2.Cooldown)
+	}
+	// Signal goes flat → cooldown cleared; then long again → reopened.
+	acts[0].Signals[0].Direction = output.Flat
+	s3, _, _ := Advance(s2, 0, acts, Prices{{"m", "X"}: 86, {"m", "Y"}: 99}, rules, t0)
+	if len(s3.Cooldown) != 0 {
+		t.Fatalf("cooldown should be cleared, got %+v", s3.Cooldown)
+	}
+	acts[0].Signals[0].Direction = output.Long
+	_, orders, _ = Advance(s3, 0, acts, Prices{{"m", "X"}: 86, {"m", "Y"}: 99}, rules, t0)
+	if len(orders) < 2 || orders[len(orders)-1].Kind != output.OrderOpen || orders[len(orders)-1].Symbol != "X" {
+		t.Fatalf("expected X to be reopened: %+v", orders)
+	}
+}
+
+func TestCloseAll(t *testing.T) {
+	prev := State{Cycle: 4, Cash: 100, Positions: []Position{{Market: "m", Strategy: "s", Symbol: "X", Direction: 1, Amount: 1000, EntryPrice: 10}},
+		Cooldown: []Cooldown{{"m", "s", "Y", 1}}}
+	s, orders := CloseAll(prev, Prices{{"m", "X"}: 12}, Rules{}, "switch", t0)
+	if s.Cash != 1300 || len(s.Positions) != 0 || len(s.Cooldown) != 0 || len(orders) != 1 || orders[0].Reason != "switch" {
+		t.Fatalf("%+v %+v", s, orders)
+	}
+}
+
+func TestAllowOpenGatesEntriesOnly(t *testing.T) {
+	asked := 0
+	rules := Rules{StopLoss: 0.5, AllowOpen: func(m, s, sym string, dir int) bool {
+		asked++
+		if m != "m" || s != "s" || sym != "X" || dir != 1 {
+			t.Errorf("AllowOpen(%q, %q, %q, %d)", m, s, sym, dir)
+		}
+		return false
+	}}
+	st, orders, err := Advance(State{}, 1000, []output.Action{action("X", output.Long, 600, 10)}, Prices{{"m", "X"}: 10}, rules, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asked != 1 || st.Cash != 1000 || len(st.Positions) != 0 {
+		t.Fatalf("a refused entry must leave the cash untouched: %+v", st)
+	}
+	if len(orders) != 1 || orders[0].Kind != output.OrderProposal || orders[0].Amount != 600 {
+		t.Fatalf("orders = %+v, want one proposal", orders)
+	}
+	// Exits are never gated: a held position whose signal flips is closed.
+	held := State{Cycle: 1, Positions: []Position{{Market: "m", Strategy: "s", Symbol: "X", Direction: 1, Amount: 600, EntryPrice: 10, OpenedAt: t0}}}
+	st, orders, _ = Advance(held, 0, []output.Action{action("X", output.Flat, 0, 10)}, Prices{{"m", "X"}: 10}, rules, t0)
+	if len(st.Positions) != 0 || orders[0].Kind != output.OrderClose {
+		t.Fatalf("exit must not need approval: %+v", orders)
+	}
+}
+
+func TestMaxHold(t *testing.T) {
+	rules := Rules{StopLoss: 0.5, MaxHold: 45 * time.Second}
+	held := State{Cycle: 1, Positions: []Position{{Market: "m", Strategy: "s", Symbol: "X", Direction: 1, Amount: 600, EntryPrice: 10, OpenedAt: t0}}}
+	px := Prices{{"m", "X"}: 10.2}
+	if st, orders := CheckStops(held, px, rules, t0.Add(44*time.Second)); len(st.Positions) != 1 || len(orders) != 0 {
+		t.Fatal("closed before max hold")
+	}
+	st, orders := CheckStops(held, px, rules, t0.Add(45*time.Second))
+	if len(st.Positions) != 0 || len(orders) != 1 || st.Cash != 612 || len(st.Cooldown) != 1 {
+		t.Fatalf("max hold not applied: %+v %+v", st, orders)
+	}
+	// Same through Advance, with the signal still long: no immediate re-entry.
+	st, orders, _ = Advance(held, 0, []output.Action{action("X", output.Long, 600, 10.2)}, px, rules, t0.Add(time.Minute))
+	if len(st.Positions) != 0 || len(orders) != 1 || orders[0].Kind != output.OrderClose {
+		t.Fatalf("Advance: %+v", orders)
+	}
+}
+
+func TestTradesHistoryAndCosts(t *testing.T) {
+	// 15 bps per side on market m.
+	rules := Rules{StopLoss: 0.5, CostBps: map[string]float64{"m": 15}}
+	held := State{Cycle: 1, Positions: []Position{
+		{Market: "m", Strategy: "s", Symbol: "X", Direction: 1, Amount: 100_000, EntryPrice: 10, OpenedAt: t0},
+	}}
+	st, orders, _ := Advance(held, 0, []output.Action{action("X", output.Flat, 0, 10.1)}, Prices{{"m", "X"}: 10.1}, rules, t0.Add(20*time.Second))
+	if len(st.Trades) != 1 || len(orders) != 1 {
+		t.Fatalf("%+v %+v", st, orders)
+	}
+	tr := st.Trades[0]
+	// Value 101 000; fees (100 000 + 101 000) × 0.15 % = 302 (rounded); net 100 698.
+	if tr.Fees != 302 || tr.PnL != 698 || st.Cash != 100_698 || tr.ExitPrice != 10.1 || tr.Held() != 20*time.Second {
+		t.Fatalf("trade %+v cash %d", tr, st.Cash)
+	}
+	if tr.Reason != "signal direction changed" || orders[0].PnL != tr.Return() {
+		t.Fatalf("trade %+v order %+v", tr, orders[0])
+	}
+	// A small move does not pay the costs: the trade is a loss.
+	st2, _ := CheckStops(State{Cycle: 2, Trades: st.Trades, Positions: []Position{
+		{Market: "m", Strategy: "s", Symbol: "X", Direction: 1, Amount: 100_000, EntryPrice: 10, OpenedAt: t0},
+	}}, Prices{{"m", "X"}: 10.02}, Rules{StopLoss: 0.5, MaxHold: time.Second, CostBps: rules.CostBps}, t0.Add(time.Minute))
+	if len(st2.Trades) != 2 || st2.Trades[1].PnL >= 0 || st2.Trades[0] != tr {
+		t.Fatalf("history %+v", st2.Trades)
+	}
+	// The history is never modified in place: the earlier state is intact.
+	if len(st.Trades) != 1 {
+		t.Fatal("appending must not alias the previous state's history")
+	}
+	// CloseAll records too.
+	st3, _ := CloseAll(State{Positions: []Position{{Market: "m", Symbol: "Y", Direction: 1, Amount: 500, EntryPrice: 2, OpenedAt: t0}}}, nil, Rules{}, "left devnet", t0)
+	if len(st3.Trades) != 1 || st3.Trades[0].PnL != 0 || st3.Trades[0].Reason != "left devnet" {
+		t.Fatalf("%+v", st3.Trades)
+	}
+}
