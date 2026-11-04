@@ -57,7 +57,7 @@ go build -o rar-desktop ./cmd/rar-desktop # desktop app: needs a C compiler and 
 
 The desktop app uses [Fyne](https://fyne.io), which needs CGO:
 
-- **Linux** (Debian/Ubuntu): `sudo apt install gcc libgl1-mesa-dev xorg-dev`.
+- **Linux** (Debian/Ubuntu): `sudo apt install gcc libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev`.
 - **macOS**: install the Xcode command line tools with `xcode-select --install`.
 - **Windows**: install a GCC toolchain such as [MSYS2](https://www.msys2.org/) MinGW-w64.
 

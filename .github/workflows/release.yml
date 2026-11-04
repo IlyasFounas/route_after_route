@@ -14,9 +14,9 @@ env:
 
 jobs:
   create:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -31,7 +31,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, target: linux, goarch: amd64, asset: route_after_route-linux-amd64.tar.xz }
+          - { os: ubuntu-24.04, target: linux, goarch: amd64, asset: route_after_route-linux-amd64.tar.xz }
           - { os: macos-latest, target: darwin, goarch: arm64, asset: route_after_route-macos-arm64.zip }
           - { os: macos-latest, target: darwin, goarch: amd64, asset: route_after_route-macos-amd64.zip }
           - { os: windows-latest, target: windows, goarch: amd64, asset: route_after_route-windows-amd64.zip }
@@ -40,13 +40,13 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - name: Install Fyne system dependencies
         if: matrix.target == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev
       - name: Install the fyne packaging tool
         run: go install fyne.io/tools/cmd/fyne@${FYNE_TOOLS_VERSION}
       - name: Package
@@ -73,10 +73,10 @@ jobs:
 
   cli:
     needs: create
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - name: Build the CLI for every platform
