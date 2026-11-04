@@ -469,7 +469,7 @@ func TestDevnetWalletCard(t *testing.T) {
 		Holdings: []HoldingView{{Holding: wallet.Holding{Symbol: "SOL", Name: "Solana", Amount: 1}, Price: 150, Value: 150, Priced: true}}}
 	u.applyWallet(bot)
 	labels := buttonLabels(u.walletBox)
-	for _, want := range []string{"Public wallet", "Devnet", "Import your wallet", "Airdrop", "Sync ledger", "Copy address"} {
+	for _, want := range []string{"Public wallet", "Devnet", "Import your wallet", "Airdrop", "Reset ledger", "Copy address"} {
 		if !slices.Contains(labels, want) {
 			t.Errorf("no main account: missing button %q in %v", want, labels)
 		}
@@ -483,9 +483,18 @@ func TestDevnetWalletCard(t *testing.T) {
 	u.hidden = true // no unlock prompt in this test
 	u.applyWallet(bot)
 	labels = buttonLabels(u.walletBox)
-	for _, want := range []string{"Unlock", "Airdrop", "Forget", "Fund bot", "Withdraw", "Copy address", "Sync ledger"} {
+	for _, want := range []string{"Unlock", "Airdrop", "Forget", "Fund bot", "Withdraw", "Copy address", "Reset ledger"} {
 		if !slices.Contains(labels, want) {
 			t.Errorf("with a main account: missing button %q in %v", want, labels)
+		}
+	}
+	s := snapshot(true, true, output.Long) // one open position
+	s.Equity = 3120
+	u.apply(s)
+	msg := u.resetLedgerText(bot)
+	for _, want := range []string{"Ledger now: $31.20", "Bot account: $150.00", "1 open position will be dropped", "history of closed trades is kept"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("reset text misses %q:\n%s", want, msg)
 		}
 	}
 	main.Locked = false
@@ -576,27 +585,26 @@ func TestTradeSummary(t *testing.T) {
 	}
 }
 
-func TestHistoryCard(t *testing.T) {
+func TestHistoryFromTheTopBar(t *testing.T) {
 	u, _ := newTestUI(t)
 	s := snapshot(false, false, "")
 	s.State.Trades = sampleTrades()
 	u.apply(s)
-	if !u.hist.card.Visible() || len(u.hist.box.Objects) != historyRows || !strings.Contains(u.hist.summary.Text, "3 trades") {
-		t.Fatalf("history card: %d rows, %q", len(u.hist.box.Objects), u.hist.summary.Text)
+	u.show(screenTrading)
+	if !u.historyBtn.Visible() {
+		t.Fatal("the history icon belongs in the top bar")
 	}
-	// Newest first.
-	first := u.hist.box.Objects[0].(*fyne.Container).Objects[0].(*fyne.Container).Objects[0].(*widget.Label)
-	if !strings.HasPrefix(first.Text, "$SOL long · $0.00") {
-		t.Fatalf("first row %q", first.Text)
+	test.Tap(u.historyBtn)
+	if u.screen != screenHistory {
+		t.Fatal("the history icon opens the history screen")
 	}
-	u.show(screenHistory)
 	if !u.histView.content.Visible() || len(u.histView.trades) != 3 || u.histView.trades[0].PnL != 0 || u.histView.empty.Visible() {
 		t.Fatalf("history screen: %d trades", len(u.histView.trades))
 	}
 
 	pub, _ := newTestUIWith(t, Settings{Pair: pair, Favorites: []string{pair}, Range: "5min", WalletMode: ModePublic})
 	pub.apply(s)
-	if pub.hist.card.Visible() {
+	if pub.historyBtn.Visible() {
 		t.Fatal("no ledger, no history in public mode")
 	}
 }

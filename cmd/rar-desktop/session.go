@@ -265,7 +265,7 @@ func (s *session) canTradeLocked() error {
 	case s.settings.WalletMode != gui.ModeDevnet:
 		return errors.New("the public wallet is read-only: switch the wallet card to devnet to let the bot trade")
 	case s.settings.LedgerCapital < minLedger:
-		return errors.New("the devnet ledger is not funded: airdrop devnet SOL, then press \"Sync ledger\" in the wallet card")
+		return errors.New("the bot ledger is not funded: use Fund bot in the wallet card (or airdrop test SOL to the bot account, then Reset ledger)")
 	}
 	return nil
 }

@@ -86,7 +86,7 @@ Les conditions de sortie sont testées dans cet ordre :
 
 Une position fermée par stop-loss ou par durée maximale n'est pas rouverte dans le même sens tant que son signal n'est pas redevenu plat ou ne s'est pas inversé.
 
-**Historique.** Chaque position fermée, quelle qu'en soit la raison (`Advance`, `CheckStops`, `CloseAll`), est ajoutée à `State.Trades` : prix et heures d'entrée et de sortie, montant, frais, gain net, motif. Elle est sauvegardée avec l'état. L'historique n'est jamais modifié en place : chaque nouvel état l'étend avec `slices.Clip` puis `append`, donc les snapshots peuvent le partager sans copie. Un reset du registre ou un *Sync ledger* le conserve.
+**Historique.** Chaque position fermée, quelle qu'en soit la raison (`Advance`, `CheckStops`, `CloseAll`), est ajoutée à `State.Trades` : prix et heures d'entrée et de sortie, montant, frais, gain net, motif. Elle est sauvegardée avec l'état. L'historique n'est jamais modifié en place : chaque nouvel état l'étend avec `slices.Clip` puis `append`, donc les snapshots peuvent le partager sans copie. Un reset du registre (*Reset ledger*) le conserve.
 
 **Coûts.** `Rules.CostBps` donne le coût par côté de chaque marché, en points de base. Le moteur temps réel le calcule comme le backtest : frais taker plus `slippage_bps` (`live.CostBps`). Il est prélevé à la fermeture sur les deux côtés, `(montant + valeur de sortie) × coût`, et le gain net en tient compte. Le cycle du CLI ne le fixe pas : ses coûts restent dans le backtest.
 
@@ -164,9 +164,10 @@ L'écran **trading** tient en deux panneaux.
   - Périodes courtes (1 min, 5 min, 1 h) : tirées des bougies de 1 s du moteur.
   - Périodes longues (1 J, 1 S, 1 M) : bougies de 5 min, 1 h et 4 h demandées à Binance pour l'affichage seulement (`Backend.History`, cache d'une minute).
   - La courbe est un raster dessiné pixel par pixel (`gui/chart.go`) : ligne anticrénelée, dégradé dessous, verte si la période monte et corail si elle baisse, avec survol, ordres du bot et prix d'entrée.
+- **En haut à droite**, une barre : accueil, nom, icône historique (ouvre l'écran *historic*, masquée sans registre), indicateur d'effort, réglages.
 - **À droite**, quatre cartes (`gui/opportunities.go` pour les deux premières) :
   - **Opportunités** : les entrées en attente, avec compte à rebours et boutons *Accept* / *Ignore*. Les lignes ne sont reconstruites que si l'ensemble change, pour ne pas perdre un clic ;
-  - **Algorithme** : le conseil en un mot (*Buy*, *Hold*, *Sell*, *Wait*, déduit de la décision par `gui/advice.go`), l'interrupteur d'autorisation et le registre (devnet ou démo) ;
+  - **Algorithme** : le conseil en un mot (*Buy*, *Hold*, *Sell*, *Wait*, déduit de la décision par `gui/advice.go`), l'interrupteur d'autorisation et le registre (*BOT LEDGER*, ce que le bot trade) ;
   - **Watchlist** : les favoris, avec prix, variation sur 5 min et état (surveillé, opportunité, en position) ;
   - **Portefeuille** : choix *Public* / *Devnet*, puis le portefeuille correspondant.
 - **Écran historic** : résumé (nombre de trades, gagnés et perdus, résultat net, frais, meilleur et pire trade), puis toutes les transactions fermées, la plus récente en premier.
@@ -225,7 +226,7 @@ L'application de bureau ne permet l'exécution que dans certains modes :
 
 **Registre devnet.** Aucun DEX du devnet n'a de liquidité réelle : les entrées approuvées sont donc exécutées au **prix Binance réel**, dans un registre local (`loop.State`).
 
-- Son capital de départ est la valeur du compte bot (SOL de test × prix réel du SOL), figée par *Sync ledger*.
+- Son capital de départ est la valeur du compte bot (SOL de test × prix réel du SOL), figée par *Reset ledger*. Ce bouton (`Backend.SyncLedger`) remet le registre à la valeur du compte bot, abandonne ses positions ouvertes et garde l'historique. Sa confirmation affiche les deux valeurs : les trades étant simulés, le registre s'écarte avec le temps des SOL réellement présents sur le compte bot.
 - Il faut au moins 10 $. En dessous, l'exécution est refusée.
 - Quitter le devnet solde les positions ouvertes au dernier prix et coupe l'autorisation.
 - **Montant maximal par trade** : `loop.Rules.MaxAmount`, en centimes (`Options.MaxTrade`, `Engine.SetMaxTrade`, 20 $ par défaut). `Advance` plafonne chaque nouvelle position, et les propositions portent le montant plafonné : l'utilisateur approuve exactement ce qui sera engagé.
@@ -236,7 +237,7 @@ Le bot ne peut jamais dépenser plus que ce que l'utilisateur lui a confié.
 
 - **Compte principal** : le portefeuille de l'utilisateur, importé (voir *Import et coffre chiffré*). Sa clé n'est en mémoire que déverrouillée, et ne signe que des virements vers le compte bot.
 - **Compte bot** : la clé générée par l'app. Le moteur ne connaît que le registre financé depuis ce compte.
-- **Alimenter** (`FundBot`) : virement devnet principal → bot. Une fois confirmé, sa valeur au prix du SOL est ajoutée au registre par `Engine.Deposit`, sans toucher aux positions. Un registre jamais financé repart de la valeur totale du compte bot, comme *Sync ledger*.
+- **Alimenter** (`FundBot`) : virement devnet principal → bot. Une fois confirmé, sa valeur au prix du SOL est ajoutée au registre par `Engine.Deposit`, sans toucher aux positions. Un registre jamais financé repart de la valeur totale du compte bot, comme *Reset ledger*.
 - **Retirer** (`WithdrawToMain`) : la valeur est d'abord **réservée** sur le cash libre du registre (`Deposit` négatif, refusé au-delà : `ErrNotEnoughCash`). Le virement bot → principal part ensuite, et la réserve est rendue s'il échoue. Seule l'adresse du compte principal est nécessaire : il peut rester verrouillé.
 - `Engine.Deposit` est bloquant : il attend que la boucle d'événements l'ait appliqué. Avant le premier cycle exécuté, il modifie le capital de départ plutôt que le cash. `LedgerCapital` suit les dépôts et les retraits, pour que le résultat affiché reste juste.
 

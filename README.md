@@ -109,7 +109,8 @@ The start of a word is enough (`t`, `hist`), and the line under the prompt tells
     - The **main account** is your own wallet. **Import your wallet** takes its recovery phrase (Phantom, Solflare, Backpack: 12 or 24 words, on their usual path `m/44'/501'/0'/0'`), a base58 private key, or a Solana CLI keypair. The address it gives is shown **before** anything is saved: check that it is yours. The secret is encrypted on your computer with a password (AES-256-GCM, PBKDF2-SHA256 with 600,000 rounds) and is never sent anywhere. The app asks for the password once per launch to **unlock** it; **Lock** forgets it again. Use a wallet made for testing.
     - The **bot account** is a wallet the app generates. **Fund bot** sends test SOL from the main account to it (a real devnet transaction, shown before you confirm it), and its value is added to the bot's ledger. **Withdraw** sends it back, from the ledger's free cash only. Withdrawing does not need the password.
     - **Airdrop** asks the devnet faucet for 1 test SOL. It is rate-limited: if it refuses, request some on [faucet.solana.com](https://faucet.solana.com) with the address shown.
-    - **Sync ledger** restarts the bot's ledger from the bot account's value, counting devnet SOL at the real SOL price.
+    - **The ledger** is the money the bot trades with: the *BOT LEDGER* in the *Algorithm* card. Devnet has no real exchange, so the bot's trades are simulated at real prices. They change the ledger, but not the SOL really in the bot account, so the two drift apart over time. *Fund bot* and *Withdraw* update the ledger by themselves.
+    - **Reset ledger** starts over: the ledger takes the bot account's current value again (its SOL at the real SOL price). Its open positions are dropped, and the history of closed trades is kept. The confirmation shows both values before you choose.
     - Approved entries are executed in that ledger at the real Binance price. No devnet exchange has real liquidity, so there is no on-chain swap yet.
     - Transfers only go through on devnet (or testnet): the app checks the cluster's genesis hash, whatever the RPC address says.
 - **Allow the bot to trade** with the switch, in devnet only. It is **off by default**. Even when it is on, every entry still waits for your approval. Turning it off stops everything immediately, stop-loss included.
@@ -143,9 +144,9 @@ Everything the bot gained or lost, in devnet or in the demo:
   - amount and fees;
   - why it closed.
 
-The *History* card of the trading screen shows the same summary with the last three trades; **See all** opens this screen.
+On the trading screen, the **history icon** in the top bar (next to the effort meter and the settings) opens this screen.
 
-Results are **net of trading costs**: the Binance fee plus the configured slippage, on both sides, as in the backtest. The history is kept in the ledger file: it survives restarts and *Sync ledger*.
+Results are **net of trading costs**: the Binance fee plus the configured slippage, on both sides, as in the backtest. The history is kept in the ledger file: it survives restarts and *Reset ledger*.
 
 ### In the background
 

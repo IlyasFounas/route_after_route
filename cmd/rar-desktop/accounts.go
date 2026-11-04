@@ -159,7 +159,7 @@ func (s *session) TransferFee(toBot bool, lamports uint64) (uint64, error) {
 
 // FundBot moves lamports from the main account to the bot account, then
 // adds their value to the ledger. A ledger never funded starts from the bot
-// account's whole value instead (as Sync ledger does).
+// account's whole value instead (as Reset ledger does).
 func (s *session) FundBot(lamports uint64) (string, error) {
 	main, _, bot, rpc, err := s.accounts()
 	if err != nil {
@@ -193,7 +193,7 @@ func (s *session) FundBot(lamports uint64) (string, error) {
 		return sig, s.SyncLedger()
 	}
 	if err := s.eng.Deposit(ctx, cents); err != nil {
-		return sig, fmt.Errorf("the SOL arrived, but the ledger was not credited (%w): press Sync ledger", err)
+		return sig, fmt.Errorf("the SOL arrived, but the ledger was not credited (%w): press Reset ledger", err)
 	}
 	s.mu.Lock()
 	s.settings.LedgerCapital += cents
@@ -230,7 +230,7 @@ func (s *session) WithdrawToMain(lamports uint64) (string, error) {
 	if err != nil {
 		if funded {
 			if rerr := s.eng.Deposit(context.WithoutCancel(ctx), cents); rerr != nil {
-				err = errors.Join(err, fmt.Errorf("the ledger could not be credited back: press Sync ledger (%w)", rerr))
+				err = errors.Join(err, fmt.Errorf("the ledger could not be credited back: press Reset ledger (%w)", rerr))
 			}
 		}
 		return sig, err

@@ -80,7 +80,8 @@ type UI struct {
 	// Opportunities and watchlist cards.
 	opps  *oppCard
 	watch *watchCard
-	hist  *historyCard
+	// historyBtn, in the top bar, opens the history screen.
+	historyBtn *widget.Button
 
 	// Screens: home prompt, trading, history.
 	screen     screen
@@ -228,8 +229,7 @@ func (u *UI) build() fyne.CanvasObject {
 
 	u.opps = newOppCard(u)
 	u.watch = newWatchCard(u)
-	u.hist = newHistoryCard(u)
-	u.rightBox = container.NewVBox(u.buildTopBar(), u.opps.card, u.buildBotCard(), u.watch.card, u.hist.card, u.buildWalletCard())
+	u.rightBox = container.NewVBox(u.buildTopBar(), u.opps.card, u.buildBotCard(), u.watch.card, u.buildWalletCard())
 	body := container.NewBorder(nil, nil, nil,
 		fixedWidth(container.NewVScroll(u.rightBox), 360),
 		left)
@@ -241,8 +241,11 @@ func (u *UI) buildTopBar() fyne.CanvasObject {
 	u.mutedTexts = append(u.mutedTexts, name)
 	gear := widget.NewButtonWithIcon("", theme.SettingsIcon(), u.showSettings)
 	gear.Importance = widget.LowImportance
+	u.historyBtn = widget.NewButtonWithIcon("", theme.HistoryIcon(), func() { u.show(screenHistory) })
+	u.historyBtn.Importance = widget.LowImportance
 	u.effort = newEffortChip(u.currentEffort(), u.showEffort)
-	return container.NewHBox(u.homeButton(), container.NewCenter(name), layout.NewSpacer(), container.NewCenter(u.effort), gear)
+	return container.NewHBox(u.homeButton(), container.NewCenter(name), layout.NewSpacer(),
+		u.historyBtn, container.NewCenter(u.effort), gear)
 }
 
 func (u *UI) buildBotCard() fyne.CanvasObject {
@@ -271,7 +274,7 @@ func (u *UI) buildBotCard() fyne.CanvasObject {
 
 	u.balance = text("—", 22, true, fg)
 	u.balancePnl = text("", 13, true, muted)
-	u.ledgerName = text("DEVNET LEDGER", 11, true, muted)
+	u.ledgerName = text("BOT LEDGER · WHAT THE BOT TRADES", 11, true, muted)
 	if u.demo {
 		u.ledgerName.Text = "DEMO LEDGER"
 	}
@@ -576,9 +579,6 @@ func (u *UI) apply(s live.Snapshot) {
 
 	u.opps.apply(s)
 	u.watch.apply(s)
-	if u.ledgerMode() {
-		u.hist.apply(s)
-	}
 	u.histView.apply(s)
 
 	// Texts changed width: lay the cards out again.
@@ -596,11 +596,11 @@ func (u *UI) refreshMode() {
 	if u.ledgerMode() {
 		u.toggleRow.Show()
 		u.ledgerBox.Show()
-		u.hist.card.Show()
+		u.historyBtn.Show()
 	} else {
 		u.toggleRow.Hide()
 		u.ledgerBox.Hide()
-		u.hist.card.Hide()
+		u.historyBtn.Hide() // no ledger, no trade
 	}
 	u.refreshToggleHint()
 	u.botBox.Refresh()

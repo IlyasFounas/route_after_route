@@ -14,9 +14,6 @@ import (
 	"github.com/IlyasFounas/route_after_route/internal/loop"
 )
 
-// historyRows is the number of recent trades shown in the card.
-const historyRows = 3
-
 // TradeSummary sums up the closed trades.
 type TradeSummary struct {
 	Trades, Won, Lost int
@@ -104,59 +101,6 @@ func tradeDetail(t loop.Trade) string {
 	return fmt.Sprintf("%s to %s (%s) · in at %s, out at %s · %s · fees %s · %s",
 		t.OpenedAt.Local().Format("Jan 2 15:04:05"), t.ClosedAt.Local().Format("15:04:05"), shortDuration(max(t.Held(), 0)),
 		priceUSD(t.EntryPrice), priceUSD(t.ExitPrice), usdCents(t.Amount), usdCents(t.Fees), t.Reason)
-}
-
-// historyCard shows the summary and the last trades; "See all" opens the
-// full history. It is rebuilt only when a trade is added.
-type historyCard struct {
-	u       *UI
-	card    fyne.CanvasObject
-	box     *fyne.Container
-	trades  []loop.Trade
-	summary *widget.Label
-	built   bool
-}
-
-func newHistoryCard(u *UI) *historyCard {
-	title := text("HISTORY", 11, true, themeColor(colorMuted))
-	u.mutedTexts = append(u.mutedTexts, title)
-	all := widget.NewButtonWithIcon("See all", theme.ListIcon(), func() { u.show(screenHistory) })
-	all.Importance = widget.LowImportance
-	c := &historyCard{u: u, box: container.NewVBox()}
-	c.summary = widget.NewLabel("")
-	c.summary.Wrapping = fyne.TextWrapWord
-	c.card = newCard(container.NewVBox(
-		container.NewHBox(container.NewCenter(title), layout.NewSpacer(), all),
-		c.summary, c.box))
-	c.rebuild(nil)
-	return c
-}
-
-func (c *historyCard) apply(s live.Snapshot) {
-	if c.built && len(s.State.Trades) == len(c.trades) {
-		return
-	}
-	c.rebuild(s.State.Trades)
-}
-
-func (c *historyCard) rebuild(trades []loop.Trade) {
-	c.built, c.trades = true, trades
-	sum := summarize(trades)
-	c.summary.SetText(summaryLine(sum))
-	c.summary.Importance = pnlImportance(sum.PnL)
-	if sum.Trades == 0 {
-		c.summary.Importance = widget.LowImportance
-	}
-	c.summary.Refresh()
-	var objs []fyne.CanvasObject
-	for i := len(trades) - 1; i >= 0 && len(trades)-i <= historyRows; i-- {
-		objs = append(objs, tradeRow(trades[i], false))
-	}
-	c.box.Objects = objs
-	c.box.Refresh()
-	if c.u.rightBox != nil {
-		c.u.rightBox.Refresh()
-	}
 }
 
 // tradeRow is one trade: the result, then the details (full: every detail).

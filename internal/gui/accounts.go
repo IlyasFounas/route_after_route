@@ -81,30 +81,44 @@ func (u *UI) botAccount(w WalletView) []fyne.CanvasObject {
 		u.app.Clipboard().SetContent(w.Address)
 	})
 	copyBtn.Importance = widget.LowImportance
-	sync := widget.NewButtonWithIcon("Sync ledger", theme.ViewRefreshIcon(), func() {
-		confirm(u, "Sync the bot ledger?",
-			"The bot's ledger restarts from the bot account's current value (devnet SOL at the real SOL price).\nIts open positions are discarded; the history of closed trades is kept.", func() {
-				go func() {
-					err := u.be.SyncLedger()
-					fyne.Do(func() {
-						if err != nil {
-							showError(u, err)
-							return
-						}
-						u.settings = u.be.Settings()
-						u.refreshMode()
-					})
-				}()
-			})
+	sync := widget.NewButtonWithIcon("Reset ledger", theme.ViewRefreshIcon(), func() {
+		confirm(u, "Reset the bot ledger?", u.resetLedgerText(w), func() {
+			go func() {
+				err := u.be.SyncLedger()
+				fyne.Do(func() {
+					if err != nil {
+						showError(u, err)
+						return
+					}
+					u.settings = u.be.Settings()
+					u.refreshMode()
+				})
+			}()
+		})
 	})
 	sync.Importance = widget.LowImportance
-	hint := caption(fmt.Sprintf("Max %s per trade. No devnet exchange has real liquidity: approved entries are filled at the real Binance price in a local ledger funded from this account. Transfers are real devnet transactions.",
+	hint := caption(fmt.Sprintf("The bot trades its ledger (see BOT LEDGER above), at most %s per trade. Devnet has no real exchange, so trades are simulated at the real Binance price: they change the ledger, not the SOL of this account. Fund bot and Withdraw are real devnet transfers, and update the ledger by themselves.",
 		usdCents(u.settings.MaxTradeCents)))
 	if w.Main == nil {
 		hint = caption("Import your main account to fund the bot. You can also airdrop test SOL here directly.")
 		return append(objs, container.NewGridWithColumns(2, u.airdropButton(false), sync), copyBtn, hint)
 	}
 	return append(objs, container.NewGridWithColumns(2, fund, withdraw), container.NewGridWithColumns(2, copyBtn, sync), hint)
+}
+
+// resetLedgerText explains Reset ledger with the two numbers it reconciles.
+func (u *UI) resetLedgerText(bot WalletView) string {
+	ledger := "not funded yet"
+	if u.hasSnap && u.settings.LedgerCapital > 0 {
+		ledger = usdCents(u.snap.Equity)
+	}
+	open := ""
+	if n := len(u.snap.State.Positions); n > 0 {
+		open = fmt.Sprintf("\n\nIts %d open %s will be dropped, without being recorded as trades.", n, plural(n, "position", "positions"))
+	}
+	return fmt.Sprintf("The ledger is the money the bot trades with. Its trades are simulated, so after a while it no longer matches the SOL really in the bot account.\n\n"+
+		"Ledger now: %s\nBot account: %s\n\nResetting sets the ledger to the bot account's value.%s The history of closed trades is kept.\n\n"+
+		"You only need this to start over: Fund bot and Withdraw already update the ledger.", ledger, usd(bot.Total), open)
 }
 
 func caption(s string) *widget.Label {
