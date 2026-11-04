@@ -96,9 +96,11 @@ The start of a word is enough (`t`, `hist`), and the line under the prompt tells
 - **Read the advice** in one word: *Buy*, *Hold*, *Sell* or *Wait*, with a one-sentence explanation. **Why?** opens the full reasoning: the strategy in charge, how it would have done on the past, what it reads right now, the strategies set aside and the recent bot activity.
 - **Answer the opportunities.** When the algorithm wants to enter a position, it does not: it **notifies you**.
   - The *Opportunities* card shows the crypto, the price, the amount and a countdown (10 seconds by default), with **Accept** and **Ignore**. The tray menu also offers *Accept*.
+  - Before you accept, each opportunity shows **the most it can gain and the most it can lose**, within your max hold: `▲ up to +$0.06` and `▼ at most −$0.14`. The gain is the take-profit net of costs, a cap and not a promise, with the share of past windows that reached it first. The loss is the stop, costs included: the most the trade can lose, unless the price jumps past the stop between two updates.
+  - These numbers come from the last 2 hours of 1-second candles: every past second is replayed as an entry held at most your max hold, and the take-profit and stop with the best expected result after costs are kept. The stop never exceeds the one of your risk tolerance. An entry with no positive expected result within the max hold is **not offered** (the *Why?* journal says so).
   - Without an answer, the opportunity expires.
   - An ignored or expired opportunity is not proposed again until its signal changes, so you are not flooded.
-- **Exits are automatic**: stop-loss, a maximum holding time (60 seconds by default) and signal reversal. A position never waits for you to close.
+- **Exits are automatic**: the entry's stop-loss and take-profit, a maximum holding time (60 seconds by default) and signal reversal. A position never waits for you to close.
 - **Choose the wallet** at the top of the wallet card:
   - **Public wallet**: paste the **public address** of a Solana wallet (Phantom, Solflare, Backpack…) to follow its value. The app values SOL and the known tokens (USDC, USDT, EURC, JUP, BONK…) in dollars.
     - It is read-only: never paste a secret phrase or a private key, the app does not need one.

@@ -42,7 +42,7 @@ func (s *session) SetEffort(e live.Effort) (string, error) {
 // re-evaluation period of its config: its clock replays days per second.
 func (s *session) paceLocked() live.Pace {
 	p := s.effortLocked().Params()
-	pace := live.Pace{SnapshotEvery: p.SnapshotEvery, ReevaluateEvery: p.ReevaluateEvery}
+	pace := live.Pace{SnapshotEvery: p.SnapshotEvery, ReevaluateEvery: p.ReevaluateEvery, BracketStride: p.BracketStride}
 	if s.fixed {
 		pace.ReevaluateEvery = 0
 	}

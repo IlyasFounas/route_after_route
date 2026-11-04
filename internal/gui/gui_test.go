@@ -760,3 +760,27 @@ func TestLogos(t *testing.T) {
 		t.Fatal("only plain tickers have logos")
 	}
 }
+
+func TestOpportunityShowsGainAndLoss(t *testing.T) {
+	u, _ := newTestUI(t)
+	s := secondSnapshot()
+	s.Execute = true
+	o := &s.Opportunities[0]
+	o.Amount, o.Hold, o.TakeProfit, o.StopLoss, o.HitRate, o.Expected, o.MaxGain, o.MaxLoss = 2000, time.Minute, 0.006, 0.004, 0.34, 0.0007, 1140, 860
+	u.apply(s)
+	r := u.opps.rows[o.ID]
+	if r == nil || r.gain.Text != "▲ up to +$11.40" || r.loss.Text != "▼ at most −$8.60" {
+		t.Fatalf("row %+v", r)
+	}
+	if !strings.Contains(r.odds.Text, "34% of past 1 min windows") || !strings.Contains(r.odds.Text, "Stop -0.40%") {
+		t.Fatalf("odds %q", r.odds.Text)
+	}
+	if got := gainLossText(*o); got != "up to +$11.40, at most −$8.60 within 1 min" {
+		t.Fatalf("summary %q", got)
+	}
+	// Without a max hold (demo), no bracket line.
+	o.Hold = 0
+	if gainLossText(*o) != "" {
+		t.Fatal("no bracket without a max hold")
+	}
+}

@@ -448,3 +448,56 @@ func TestDepositAfterFirstCycleMovesCash(t *testing.T) {
 		t.Fatalf("%v %+v", err, e.state)
 	}
 }
+
+func TestOpportunityCarriesItsBracket(t *testing.T) {
+	e, fm, _ := newApprovalEngine(t)
+	e.opts.MaxHold = 24 * time.Hour
+	clear(e.brackets)
+	op := feedUntilOpportunity(t, e, fm)
+	if op.Hold != 24*time.Hour || op.TakeProfit <= 0 || op.StopLoss <= 0 || op.MaxLoss <= 0 || op.HitRate <= 0 || op.Expected <= 0 {
+		t.Fatalf("bracket missing: %+v", op)
+	}
+	cost := e.costs["fake"] / 1e4
+	amt := float64(op.Amount)
+	if want := int64(math.Round(amt*op.StopLoss + amt*(2-op.StopLoss)*cost)); op.MaxLoss != want {
+		t.Fatalf("max loss %d, want %d", op.MaxLoss, want)
+	}
+	if want := int64(math.Round(amt*op.TakeProfit - amt*(2+op.TakeProfit)*cost)); op.MaxGain != want {
+		t.Fatalf("max gain %d, want %d", op.MaxGain, want)
+	}
+	if prof := loop.RulesFor(e.ev.Profile); op.StopLoss > prof.StopLoss {
+		t.Fatalf("the stop %v exceeds the profile's %v", op.StopLoss, prof.StopLoss)
+	}
+	e.approve(op.ID)
+	if len(e.state.Positions) != 1 {
+		t.Fatal("approved entry not taken")
+	}
+	if p := e.state.Positions[0]; p.TakeProfit != op.TakeProfit || p.StopLoss != op.StopLoss {
+		t.Fatalf("the position must keep the bracket shown: %+v vs %+v", p, op)
+	}
+}
+
+func TestNoEdgeIsNotOffered(t *testing.T) {
+	e, fm, _ := newApprovalEngine(t)
+	e.opts.MaxHold = 24 * time.Hour
+	e.costs["fake"] = 2000 // 20 % per side: nothing can beat that
+	clear(e.brackets)
+	for _, b := range fm.future {
+		e.onUpdate(market.Update{Market: "fake", Symbol: "X", Bar: b, Closed: true})
+	}
+	if ops := e.opportunities(); len(ops) != 0 {
+		t.Fatalf("no entry may be offered without edge: %+v", ops)
+	}
+	reported := 0
+	for _, ev := range e.log {
+		if ev.Kind == EventOpportunity {
+			t.Fatalf("unexpected opportunity: %s", ev.Text)
+		}
+		if strings.Contains(ev.Text, "not offered: no edge within the max hold") {
+			reported++
+		}
+	}
+	if reported == 0 || reported > 20 {
+		t.Fatalf("the missing edge must be reported once per signal, got %d reports", reported)
+	}
+}

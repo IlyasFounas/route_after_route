@@ -1,7 +1,9 @@
 package loop
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -230,5 +232,48 @@ func TestMaxAmountCapsEachEntry(t *testing.T) {
 	s, _, _ = Advance(State{}, 1000, []output.Action{two}, prices, Rules{StopLoss: 0.1}, t0)
 	if s.Positions[0].Amount != 600 {
 		t.Fatalf("uncapped: %+v", s.Positions[0])
+	}
+}
+
+func TestBracketAtEntryAndTakeProfit(t *testing.T) {
+	rules := Rules{StopLoss: 0.2, Bracket: func(_, _, sym string, dir int) (float64, float64, bool) {
+		return 0.01, 0.005, sym == "X" // Y has no edge
+	}}
+	two := output.Action{Rank: 1, Market: "m", Strategy: "s", Signals: []output.SymbolSignal{
+		{Symbol: "X", Direction: output.Long, Allocation: 100, Price: 10},
+		{Symbol: "Y", Direction: output.Long, Allocation: 100, Price: 5},
+	}}
+	prices := Prices{{"m", "X"}: 10, {"m", "Y"}: 5}
+	s, orders, err := Advance(State{}, 1000, []output.Action{two}, prices, rules, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Positions) != 1 || len(orders) != 1 || s.Positions[0].TakeProfit != 0.01 || s.Positions[0].StopLoss != 0.005 {
+		t.Fatalf("only X has an edge, with its bracket: %+v %+v", s.Positions, orders)
+	}
+	// Its own stop (0.5 %) applies, not the rules' 20 %.
+	if st, o := CheckStops(s, Prices{{"m", "X"}: 9.94}, rules, t0.Add(time.Second)); len(o) != 1 || !strings.HasPrefix(o[0].Reason, "stop-loss") || len(st.Cooldown) != 1 {
+		t.Fatalf("position stop: %+v", o)
+	}
+	// Take-profit at +1 %.
+	st, o := CheckStops(s, Prices{{"m", "X"}: 10.1}, rules, t0.Add(time.Second))
+	if len(o) != 1 || !strings.HasPrefix(o[0].Reason, "take-profit") || st.Trades[0].PnL != 1 {
+		t.Fatalf("take-profit: %+v %+v", o, st.Trades)
+	}
+	if st, o := CheckStops(s, Prices{{"m", "X"}: 10.05}, rules, t0.Add(time.Second)); len(o) != 0 || len(st.Positions) != 1 {
+		t.Fatal("between the stop and the take-profit, the position is kept")
+	}
+}
+
+func TestOldStateWithoutBracketLoads(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	os.WriteFile(path, []byte(`{"cycle":2,"cash":5,"positions":[{"market":"m","strategy":"s","symbol":"X","direction":1,"amount":100,"entry_price":10}]}`), 0o644)
+	s, err := Load(path)
+	if err != nil || s.Positions[0].TakeProfit != 0 || s.Positions[0].StopLoss != 0 {
+		t.Fatalf("%+v %v", s, err)
+	}
+	// Without its own stop, the rules' stop applies.
+	if _, o := CheckStops(s, Prices{{"m", "X"}: 8.9}, Rules{StopLoss: 0.1}, t0); len(o) != 1 {
+		t.Fatal("rules stop not applied to an old position")
 	}
 }

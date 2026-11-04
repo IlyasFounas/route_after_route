@@ -332,6 +332,7 @@ func (s *session) startLocked() error {
 		// The cadence of the effort level; the demo keeps its config's
 		// re-evaluation period (see paceLocked).
 		SnapshotEvery: s.paceLocked().SnapshotEvery,
+		BracketStride: s.paceLocked().BracketStride,
 	}
 	if !s.fixed {
 		// Every reliable (market, strategy) pair may signal: each favorite

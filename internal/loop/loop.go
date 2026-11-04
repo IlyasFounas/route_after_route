@@ -27,6 +27,11 @@ type Position struct {
 	Amount     int64     `json:"amount"`    // capital committed at entry (minor units)
 	EntryPrice float64   `json:"entry_price"`
 	OpenedAt   time.Time `json:"opened_at"`
+	// TakeProfit and StopLoss are the position's own bracket, as returns
+	// (0.004 = 0.4 %), fixed at entry by Rules.Bracket. A zero StopLoss
+	// falls back to Rules.StopLoss; a zero TakeProfit means none.
+	TakeProfit float64 `json:"take_profit,omitempty"`
+	StopLoss   float64 `json:"stop_loss,omitempty"`
 }
 
 // PnL is the unrealised return of the position at price.
@@ -194,6 +199,10 @@ type Rules struct {
 	// not opened but returned as an OrderProposal, cash untouched. Nil
 	// allows every entry. Exits are never gated.
 	AllowOpen func(market, strategy, symbol string, direction int) bool `json:"-"`
+	// Bracket, when set, gives the take-profit and stop-loss of a new
+	// position. An entry it refuses (ok false: no edge within the holding
+	// time) is neither opened nor proposed.
+	Bracket func(market, strategy, symbol string, direction int) (takeProfit, stopLoss float64, ok bool) `json:"-"`
 	// MaxAmount caps the capital committed to one new position, in minor
 	// units (0 = no cap): the bot never puts more than this in one trade.
 	MaxAmount int64 `json:"max_amount,omitempty"`
@@ -228,11 +237,18 @@ func RulesFor(p profile.Profile) Rules { return Rules{StopLoss: p.MaxDrawdown() 
 
 type posKey struct{ Market, Strategy, Symbol string }
 
-// stopReason returns a non-empty reason when the position hits the stop-loss
-// or has been held for MaxHold.
+// stopReason returns a non-empty reason when the position hits its stop-loss
+// or its take-profit, or has been held for MaxHold.
 func stopReason(p Position, pnl float64, rules Rules, now time.Time) string {
-	if pnl <= -rules.StopLoss {
-		return fmt.Sprintf("stop-loss: %.2f%% <= -%.2f%%", pnl*100, rules.StopLoss*100)
+	stop := rules.StopLoss
+	if p.StopLoss > 0 {
+		stop = p.StopLoss
+	}
+	if pnl <= -stop {
+		return fmt.Sprintf("stop-loss: %.2f%% <= -%.2f%%", pnl*100, stop*100)
+	}
+	if p.TakeProfit > 0 && pnl >= p.TakeProfit {
+		return fmt.Sprintf("take-profit: %+.2f%% >= +%.2f%%", pnl*100, p.TakeProfit*100)
 	}
 	if rules.MaxHold > 0 && !p.OpenedAt.IsZero() && now.Sub(p.OpenedAt) >= rules.MaxHold {
 		return fmt.Sprintf("max hold reached: %s (%+.2f%%)", rules.MaxHold, pnl*100)
@@ -302,7 +318,7 @@ func CheckStops(prev State, prices Prices, rules Rules, now time.Time) (State, [
 // Advance applies a cycle's actions to the portfolio and returns the new
 // state and the orders to carry out.
 //
-// Exit conditions, checked in order: stop-loss or max hold; (market,
+// Exit conditions, checked in order: stop-loss, take-profit or max hold; (market,
 // strategy) no longer selected; signal direction changed. Kept positions are
 // not resized. New positions are funded from cash only, in rank order, at
 // most rules.MaxAmount each, and only when rules.AllowOpen accepts them
@@ -367,6 +383,13 @@ func Advance(prev State, initialCash int64, actions []output.Action, prices Pric
 			if d, ok := cooldown[k]; ok && d == output.Sign(s.Direction) {
 				continue
 			}
+			var tp, sl float64
+			if rules.Bracket != nil {
+				var ok bool
+				if tp, sl, ok = rules.Bracket(a.Market, a.Strategy, s.Symbol, output.Sign(s.Direction)); !ok {
+					continue
+				}
+			}
 			amt := min(s.Allocation, next.Cash)
 			if rules.MaxAmount > 0 {
 				amt = min(amt, rules.MaxAmount)
@@ -380,7 +403,8 @@ func Advance(prev State, initialCash int64, actions []output.Action, prices Pric
 				continue
 			}
 			next.Cash -= amt
-			p := Position{Market: a.Market, Strategy: a.Strategy, Symbol: s.Symbol, Direction: output.Sign(s.Direction), Amount: amt, EntryPrice: s.Price, OpenedAt: now}
+			p := Position{Market: a.Market, Strategy: a.Strategy, Symbol: s.Symbol, Direction: output.Sign(s.Direction), Amount: amt, EntryPrice: s.Price, OpenedAt: now,
+				TakeProfit: tp, StopLoss: sl}
 			next.Positions = append(next.Positions, p)
 			orders = append(orders, output.Order{Kind: output.OrderOpen, Market: a.Market, Strategy: a.Strategy, Symbol: s.Symbol, Direction: s.Direction, Amount: amt, Price: s.Price,
 				Reason: fmt.Sprintf("rank %d, signal %+.3f, exposure %+.2f", a.Rank, s.Signal, s.Exposure)})

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
@@ -32,6 +33,9 @@ type oppRow struct {
 	expires   time.Time
 	countdown *widget.Label
 	detail    *widget.Label
+	gain      *canvas.Text // up to +$x at the take-profit
+	loss      *canvas.Text // at most −$y at the stop
+	odds      *widget.Label
 	accept    *widget.Button
 	ignore    *widget.Button
 }
@@ -57,6 +61,7 @@ func (c *oppCard) apply(s live.Snapshot) {
 		for _, o := range s.Opportunities {
 			if r := c.rows[o.ID]; r != nil {
 				r.detail.SetText(oppDetail(o))
+				r.setBracket(o)
 			}
 		}
 	}
@@ -92,6 +97,13 @@ func (c *oppCard) rebuild(ops []live.Opportunity, canTrade bool) {
 		r.detail = widget.NewLabel(oppDetail(o))
 		r.detail.Wrapping = fyne.TextWrapWord
 		r.detail.SizeName = theme.SizeNameCaptionText
+		r.gain = text("", 14, true, themeColor(colorUp))
+		r.loss = text("", 14, true, themeColor(colorDown))
+		r.odds = widget.NewLabel("")
+		r.odds.Wrapping = fyne.TextWrapWord
+		r.odds.SizeName = theme.SizeNameCaptionText
+		r.odds.Importance = widget.LowImportance
+		r.setBracket(o)
 		id := o.ID
 		r.accept = widget.NewButtonWithIcon("Accept", theme.ConfirmIcon(), func() {
 			r.accept.Disable()
@@ -108,6 +120,9 @@ func (c *oppCard) rebuild(ops []live.Opportunity, canTrade bool) {
 		objs = append(objs,
 			container.NewBorder(nil, nil, container.NewCenter(coinBadge(baseOf(o.Symbol), 28)), r.countdown, head),
 			r.detail)
+		if o.Hold > 0 {
+			objs = append(objs, container.NewGridWithColumns(2, r.gain, r.loss), r.odds)
+		}
 		if canTrade {
 			objs = append(objs, container.NewHBox(r.accept, r.ignore))
 		} else {
@@ -144,6 +159,42 @@ func (c *oppCard) tick(now time.Time) {
 
 func oppDetail(o live.Opportunity) string {
 	return fmt.Sprintf("%s at %s · signal %+.2f · %s", usdCents(o.Amount), priceUSD(o.Price), o.Signal, o.Strategy)
+}
+
+// setBracket shows what the entry may gain and lose within the max hold.
+func (r *oppRow) setBracket(o live.Opportunity) {
+	if o.Hold == 0 {
+		return
+	}
+	g, l, odds := bracketLines(o)
+	r.gain.Text, r.loss.Text = g, l
+	r.gain.Refresh()
+	r.loss.Refresh()
+	r.odds.SetText(odds)
+}
+
+// bracketLines are the gain line, the loss line and their odds.
+func bracketLines(o live.Opportunity) (gain, loss, odds string) {
+	gain = "▲ up to " + signedCents(o.MaxGain)
+	loss = "▼ at most " + signedCents(-o.MaxLoss)
+	odds = fmt.Sprintf("Within %s: take-profit %+.2f%%, reached first in %.0f%% of past %s windows. Stop %.2f%%: the loss is capped there, unless the price jumps past it. Expected %+.2f%% after costs.",
+		holdText(o.Hold), o.TakeProfit*100, o.HitRate*100, holdText(o.Hold), -o.StopLoss*100, o.Expected*100)
+	return gain, loss, odds
+}
+
+// gainLossText is the one-line summary of notifications and the tray.
+func gainLossText(o live.Opportunity) string {
+	if o.Hold == 0 {
+		return ""
+	}
+	return fmt.Sprintf("up to %s, at most %s within %s", signedCents(o.MaxGain), signedCents(-o.MaxLoss), holdText(o.Hold))
+}
+
+func holdText(d time.Duration) string {
+	if d < time.Minute || d%time.Minute != 0 {
+		return fmt.Sprintf("%d s", int(d.Seconds()))
+	}
+	return fmt.Sprintf("%d min", int(d.Minutes()))
 }
 
 func plural(n int, one, many string) string {

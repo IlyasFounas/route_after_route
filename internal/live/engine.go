@@ -33,6 +33,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -43,6 +44,7 @@ import (
 	"github.com/IlyasFounas/route_after_route/internal/market"
 	"github.com/IlyasFounas/route_after_route/internal/output"
 	"github.com/IlyasFounas/route_after_route/internal/profile"
+	"github.com/IlyasFounas/route_after_route/internal/risk"
 )
 
 // Options configures an Engine.
@@ -77,6 +79,9 @@ type Options struct {
 	// MaxTrade caps the capital of one new position, in minor units (0 =
 	// no cap).
 	MaxTrade int64
+	// BracketStride samples one past window out of BracketStride when an
+	// entry's bracket is estimated (default 2; see Effort).
+	BracketStride int
 	// SkipApproval opens entries without asking. Tests only: the
 	// applications never set it.
 	SkipApproval bool
@@ -136,6 +141,19 @@ type Opportunity struct {
 	Amount    int64   // capital the entry would commit (minor units)
 	At        time.Time
 	Expires   time.Time
+
+	// The bracket, computed over the max hold (zero when there is no max
+	// hold, as in the demo). Returns are fractions of Amount.
+	Hold       time.Duration
+	TakeProfit float64
+	StopLoss   float64
+	// HitRate is the share of past windows that reached the take-profit
+	// before the stop; Expected the mean net return with this bracket.
+	HitRate, Expected float64
+	// MaxGain is the gain at the take-profit, net of costs: a cap, not a
+	// promise. MaxLoss is the loss at the stop, costs included: the most
+	// the entry can lose, unless the price gaps past the stop.
+	MaxGain, MaxLoss int64
 }
 
 // oppKey identifies an entry: one per (market, strategy, symbol, direction).
@@ -210,6 +228,15 @@ type Engine struct {
 	snapEvery   time.Duration // snapshot throttle (Options.SnapshotEvery, then SetPace)
 	reevalEvery time.Duration // full re-evaluation period (Config.ReevaluateEvery, then SetPace)
 	paceChanged bool          // the ticker must be reset to snapEvery
+	stride      int           // bracket sampling (SetPace)
+
+	brackets map[bracketKey]risk.Bracket // reset at every full evaluation
+	noEdge   map[oppKey]bool             // entries already reported without edge
+}
+
+type bracketKey struct {
+	Market, Symbol string
+	Direction      int
 }
 
 // Pace is how often the engine does its periodic work. A zero field keeps
@@ -219,6 +246,9 @@ type Pace struct {
 	SnapshotEvery time.Duration
 	// ReevaluateEvery is the period of the full evaluation, in engine time.
 	ReevaluateEvery time.Duration
+	// BracketStride samples one past window out of BracketStride when an
+	// entry's bracket is estimated.
+	BracketStride int
 }
 
 // New validates the options and builds an engine (not started).
@@ -247,6 +277,9 @@ func New(o Options) (*Engine, error) {
 	if o.WallClock == nil {
 		o.WallClock = time.Now
 	}
+	if o.BracketStride <= 0 {
+		o.BracketStride = 2
+	}
 	e := &Engine{
 		opts:     o,
 		cmds:     make(chan command, 16),
@@ -265,6 +298,9 @@ func New(o Options) (*Engine, error) {
 		approved:   map[oppKey]bool{},
 
 		maxTrade:    o.MaxTrade,
+		stride:      max(o.BracketStride, 1),
+		brackets:    map[bracketKey]risk.Bracket{},
+		noEdge:      map[oppKey]bool{},
 		snapEvery:   o.SnapshotEvery,
 		reevalEvery: o.Config.ReevaluateEvery.Duration,
 	}
@@ -604,12 +640,22 @@ func (e *Engine) advance() {
 	rules.AllowOpen = func(m, st, sym string, dir int) bool {
 		return e.execute && (e.opts.SkipApproval || e.approved[oppKey{m, st, sym, dir}])
 	}
+	if e.opts.MaxHold > 0 {
+		rules.Bracket = func(m, st, sym string, dir int) (float64, float64, bool) {
+			b := e.bracket(m, sym, dir, rules.StopLoss)
+			if !b.OK {
+				e.reportNoEdge(oppKey{m, st, sym, dir}, b)
+			}
+			return b.TakeProfit, b.StopLoss, b.OK
+		}
+	}
 	state, orders, err := loop.Advance(e.state, e.profile.Capital, actions, e.prices(), rules, e.now)
 	if err != nil {
 		e.fail(err)
 		return
 	}
 	e.trackOpportunities(actions, orders)
+	e.releaseNoEdge(actions)
 	if !e.execute {
 		e.report = ev.Report(e.now, actions, orders, e.state)
 		return
@@ -670,6 +716,7 @@ func (e *Engine) trackOpportunities(actions []output.Action, orders []output.Ord
 			proposed[k] = true
 			if op, ok := e.opps[k]; ok {
 				op.Price, op.Amount, op.Signal = o.Price, o.Amount, signalOf(actions, k)
+				e.fillBracket(op)
 				continue
 			}
 			e.oppSeq++
@@ -678,16 +725,96 @@ func (e *Engine) trackOpportunities(actions []output.Action, orders []output.Ord
 				Direction: o.Direction, Signal: signalOf(actions, k), Price: o.Price, Amount: o.Amount,
 				At: now, Expires: now.Add(e.opts.ApprovalTTL),
 			}
+			e.fillBracket(op)
 			e.opps[k] = op
 			oc := o
-			e.addEvent(EventOpportunity, fmt.Sprintf("opportunity %s: %s %s/%s %s %s @%g (signal %+.3f), waiting for approval",
-				op.ID, o.Direction, o.Market, o.Symbol, o.Strategy, output.Money(o.Amount), o.Price, op.Signal), &oc)
+			e.addEvent(EventOpportunity, fmt.Sprintf("opportunity %s: %s %s/%s %s %s @%g (signal %+.3f)%s, waiting for approval",
+				op.ID, o.Direction, o.Market, o.Symbol, o.Strategy, output.Money(o.Amount), o.Price, op.Signal, bracketText(*op)), &oc)
 		}
 	}
 	for k, op := range e.opps {
 		if !proposed[k] {
 			delete(e.opps, k)
 			e.info(fmt.Sprintf("opportunity %s withdrawn: the algorithm no longer proposes it", op.ID))
+		}
+	}
+}
+
+// bracket is the cached estimate for an entry, computed on the closed
+// candles in memory over the max hold. maxStop is the profile's stop.
+func (e *Engine) bracket(mkt, sym string, dir int, maxStop float64) risk.Bracket {
+	k := bracketKey{mkt, sym, dir}
+	if b, ok := e.brackets[k]; ok {
+		return b
+	}
+	var b risk.Bracket
+	if m, ok := e.markets[mkt]; ok && e.opts.MaxHold > 0 {
+		if bar := m.Descriptor().Granularity.Duration(); bar > 0 {
+			b = risk.Estimate(e.data[mkt].Bars[sym], risk.Params{Direction: dir, Hold: max(1, int(e.opts.MaxHold/bar)),
+				Stride: e.stride, MaxStop: maxStop, CostBps: e.costs[mkt]})
+		}
+	}
+	e.brackets[k] = b
+	return b
+}
+
+// fillBracket sets an opportunity's bracket and what it may gain or lose.
+func (e *Engine) fillBracket(op *Opportunity) {
+	if e.opts.MaxHold <= 0 {
+		return
+	}
+	p := e.profile
+	if e.evOK {
+		p = e.ev.Profile
+	}
+	b := e.bracket(op.Market, op.Symbol, output.Sign(op.Direction), loop.RulesFor(p).StopLoss)
+	if !b.OK {
+		return
+	}
+	cost := e.costs[op.Market] / 1e4
+	amt := float64(op.Amount)
+	op.Hold, op.TakeProfit, op.StopLoss, op.HitRate, op.Expected = e.opts.MaxHold, b.TakeProfit, b.StopLoss, b.HitRate, b.Expected
+	op.MaxGain = int64(math.Round(amt*b.TakeProfit - amt*(2+b.TakeProfit)*cost))
+	op.MaxLoss = int64(math.Round(amt*b.StopLoss + amt*(2-b.StopLoss)*cost))
+}
+
+func bracketText(op Opportunity) string {
+	if op.Hold == 0 {
+		return ""
+	}
+	return fmt.Sprintf(", within %s: up to +%s (%.0f%% of past windows), at most -%s",
+		op.Hold, output.Money(op.MaxGain), op.HitRate*100, output.Money(op.MaxLoss))
+}
+
+// reportNoEdge says once why an entry the strategy wants is not offered.
+func (e *Engine) reportNoEdge(k oppKey, b risk.Bracket) {
+	if e.noEdge[k] {
+		return
+	}
+	e.noEdge[k] = true
+	dir := "long"
+	if k.Direction < 0 {
+		dir = "short"
+	}
+	reason := fmt.Sprintf("best expected %+.3f%% after costs over %d past windows", b.Expected*100, b.Samples)
+	if b.Samples < risk.MinSamples {
+		reason = fmt.Sprintf("only %d past windows of history", b.Samples)
+	}
+	e.info(fmt.Sprintf("%s %s/%s not offered: no edge within the max hold of %s (%s)", dir, k.Market, k.Symbol, e.opts.MaxHold, reason))
+}
+
+// releaseNoEdge forgets the reports whose signal has changed, so that a
+// new entry is reported again.
+func (e *Engine) releaseNoEdge(actions []output.Action) {
+	current := map[[3]string]int{}
+	for _, a := range actions {
+		for _, sg := range a.Signals {
+			current[[3]string{a.Market, a.Strategy, sg.Symbol}] = output.Sign(sg.Direction)
+		}
+	}
+	for k := range e.noEdge {
+		if current[[3]string{k.Market, k.Strategy, k.Symbol}] != k.Direction {
+			delete(e.noEdge, k)
 		}
 	}
 }
@@ -796,6 +923,7 @@ func (e *Engine) reevaluate(reason string) {
 	// Only the evaluation is kept: the portfolio moves through advance, so
 	// a re-evaluation never opens a position without approval.
 	e.ev, e.evOK = res.Evaluation, true
+	clear(e.brackets) // re-estimated on the newer history
 	e.nextReeval = e.now.Add(e.reevalEvery)
 	e.lastErr = ""
 	sel := make([]string, len(res.Evaluation.Decision.Selected))
@@ -896,6 +1024,9 @@ func (e *Engine) deposit(cents int64) error {
 }
 
 func (e *Engine) setPace(p Pace) {
+	if p.BracketStride > 0 {
+		e.stride = p.BracketStride
+	}
 	if p.SnapshotEvery > 0 && p.SnapshotEvery != e.snapEvery {
 		e.snapEvery, e.paceChanged = p.SnapshotEvery, true
 	}

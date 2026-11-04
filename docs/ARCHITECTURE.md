@@ -44,7 +44,8 @@ cmd/rar ─► internal/app (racine de composition : seul endroit qui connaît l
 | arbiter | — |
 | output | profile, market, arbiter |
 | loop | profile, output |
-| live | app, market, strategy, eval, arbiter, output, loop, profile |
+| risk | market |
+| live | app, market, strategy, eval, arbiter, output, loop, profile, risk |
 | gui | live, output, loop, market, profile, arbiter, wallet |
 | wallet | — |
 
@@ -79,7 +80,7 @@ Dans une action, l'allocation se répartit à parts égales entre les symboles d
 
 Les conditions de sortie sont testées dans cet ordre :
 
-1. le stop-loss (la moitié du drawdown maximal du profil), ou la durée maximale de détention `Rules.MaxHold` ;
+1. le stop-loss de la position (à défaut, la moitié du drawdown maximal du profil), son take-profit, ou la durée maximale de détention `Rules.MaxHold` ;
 2. le couple n'est plus sélectionné ;
 3. le signal a changé de direction.
 
@@ -123,7 +124,26 @@ Le moteur **n'ouvre jamais de position sans l'accord de l'utilisateur** :
 2. L'échéance est en **heure murale** (`ApprovalTTL`, 10 s par défaut), car c'est le temps de réaction de l'utilisateur.
 3. `Engine.Approve(id)` autorise cette entrée, puis relance aussitôt `advance()`. La position s'ouvre au dernier prix, seulement si l'exécution est autorisée, que l'opportunité n'a pas expiré et que le signal va toujours dans le même sens.
 4. Une opportunité refusée (`Reject`) ou expirée n'est plus proposée tant que son signal n'est pas redevenu plat ou ne s'est pas inversé. Sinon elle reviendrait à chaque bougie de 1 s.
-5. Les sorties (stop-loss, `MaxHold`, changement de signal, désélection) sont automatiques.
+5. Les sorties (stop-loss, take-profit, `MaxHold`, changement de signal, désélection) sont automatiques.
+
+### Bracket : take-profit, stop et durée maximale
+
+Chaque entrée est un *bracket* calculé sur la durée maximale de détention choisie par l'utilisateur. C'est le package pur `internal/risk`, qui n'importe que `market`.
+
+- **Rejeu** : `risk.Estimate` part de chaque bougie close en mémoire (2 h de bougies de 1 s, une sur `BracketStride`), comme si une position y était ouverte et gardée au plus `MaxHold`. Pour chaque fenêtre, on note la première bougie où chaque take-profit candidat et chaque stop candidat est touché (par les plus hauts et les plus bas), et le rendement à la dernière bougie. Si les deux sont touchés dans la même bougie, le stop est supposé premier : l'ordre à l'intérieur d'une bougie est inconnu.
+- **Candidats** : les déciles 10 % à 90 % des excursions favorables (take-profit) et défavorables (stop). Les stops sont plafonnés au stop du profil, qui reste aussi candidat : la tolérance au risque de l'utilisateur reste le plafond.
+- **Choix** : le couple (TP, SL) qui maximise le rendement net moyen, `P(TP d'abord)·TP − P(SL d'abord)·SL + P(aucun)·rendement final − 2·coût`. Si ce maximum est ≤ 0, ou s'il y a moins de 30 fenêtres, l'entrée n'a pas d'avantage : `OK = false`.
+- **Coût** : deux passes sans stocker les fenêtres (excursions, puis premiers contacts). Moins de 1,3 Mo et environ 30 ms pour 2 h de bougies de 1 s et un `MaxHold` de 600 s.
+- **Limite** : la statistique est inconditionnelle. Elle décrit comment le marché bouge sur la durée de détention, pas ce que le signal de la stratégie y ajoute.
+
+Branchement :
+
+- `loop.Rules.Bracket` est consulté à chaque ouverture. Une entrée refusée n'est ni ouverte ni proposée. Les valeurs sont gardées sur la position (`Position.TakeProfit`, `Position.StopLoss`, absentes des anciens fichiers d'état, qui se chargent toujours). `stopReason` y ajoute la sortie `take-profit`, qui bloque elle aussi la réentrée dans le même sens.
+- Le moteur garde les brackets en cache par (marché, symbole, sens) et vide le cache à chaque réévaluation complète. Une entrée sans avantage est signalée une fois dans le journal (« not offered: no edge within the max hold ») jusqu'au changement de signal.
+- `Opportunity` porte `Hold`, `TakeProfit`, `StopLoss`, `HitRate`, `Expected`, `MaxGain` et `MaxLoss`, en centimes et nets des coûts des deux côtés :
+  - `MaxLoss = montant·SL + montant·(2 − SL)·coût` est une borne, sauf si le prix saute au-delà du stop entre deux mises à jour ;
+  - `MaxGain = montant·TP − montant·(2 + TP)·coût` est un plafond, pas une promesse.
+- L'interface les montre sur chaque opportunité, dans la notification et dans l'entrée *Accept* de la barre système. Changer la durée maximale redémarre le moteur, donc les brackets sont recalculés pour la nouvelle durée. Sans durée maximale (la démo), il n'y a pas de bracket et le comportement d'avant est inchangé.
 
 `Options.SkipApproval` n'existe que pour les tests : aucune application ne l'active.
 
@@ -273,4 +293,4 @@ Tout est attaché à la release GitHub. Les binaires ne sont pas signés.
 - **Signature** des binaires macOS et Windows : il faut des certificats payants.
 - **Édition des stratégies** depuis l'interface. Aujourd'hui, elle se fait dans `config.json`.
 - **Vrai bot sur réseau de test** (en partie fait). Portefeuille devnet dédié, airdrop, approbation par entrée et registre au prix réel sont en place. Il reste à exécuter de vrais swaps on-chain, ce qui demande un DEX devnet avec de la liquidité, ou le mainnet avec de petits montants.
-- **Algorithme de risque et de gains à l'échelle de la seconde.** Sur 2 h de bougies de 1 s, les deux stratégies du catalogue sont rejetées : `zscore_revert` perd, plombé par les frais, et `sma_cross` ne trade pas. Avec 10 bps de frais et 5 bps de slippage par côté, un aller-retour coûte environ 0,3 %. Une stratégie à quelques dizaines de secondes doit viser des mouvements plus grands que ça.
+- **Algorithme de risque et de gains à l'échelle de la seconde** (en partie fait). Le bracket (`internal/risk`) dimensionne chaque entrée sur la durée maximale et écarte celles qui n'ont pas d'avantage après les frais (environ 0,3 % l'aller-retour). Il reste deux points : les deux stratégies du catalogue sont toujours rejetées sur 2 h de bougies de 1 s, et le bracket ne tient pas compte du signal. Un bracket conditionné au signal, mesuré sur les seules fenêtres où la stratégie voulait entrer, serait plus juste.

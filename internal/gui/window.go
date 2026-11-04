@@ -331,9 +331,11 @@ func (u *UI) setTrayOpportunities(ops []live.Opportunity, canTrade bool) {
 	if canTrade {
 		for _, o := range ops {
 			id := o.ID
-			items = append(items, fyne.NewMenuItem(
-				fmt.Sprintf("Accept: %s %s at %s", verbOf(o.Direction), tickerOf(baseOf(o.Symbol)), priceUSD(o.Price)),
-				func() { go u.be.Approve(id) }))
+			label := fmt.Sprintf("Accept: %s %s at %s", verbOf(o.Direction), tickerOf(baseOf(o.Symbol)), priceUSD(o.Price))
+			if gl := gainLossText(o); gl != "" {
+				label += " · " + gl
+			}
+			items = append(items, fyne.NewMenuItem(label, func() { go u.be.Approve(id) }))
 		}
 		if len(items) > 0 {
 			items = append(items, fyne.NewMenuItemSeparator())
@@ -733,6 +735,9 @@ func (u *UI) notify(first bool) {
 		switch {
 		case ev.Kind == live.EventOpportunity:
 			body := fmt.Sprintf("%s at %s · %s to accept in route_after_route.", usdCents(o.Amount), priceUSD(o.Price), u.ttlText())
+			if op, ok := u.opportunityOf(*o); ok && gainLossText(op) != "" {
+				body = fmt.Sprintf("%s at %s: %s. %s to accept in route_after_route.", usdCents(o.Amount), priceUSD(o.Price), gainLossText(op), u.ttlText())
+			}
 			if !u.snap.Execute {
 				body = fmt.Sprintf("At %s. Advice only: the bot is not allowed to trade.", priceUSD(o.Price))
 			}
@@ -751,6 +756,16 @@ func (u *UI) notify(first bool) {
 }
 
 // ttlText is the approval window, e.g. "10 s".
+// opportunityOf finds the pending opportunity of a proposal order.
+func (u *UI) opportunityOf(o output.Order) (live.Opportunity, bool) {
+	for _, op := range u.snap.Opportunities {
+		if op.Market == o.Market && op.Strategy == o.Strategy && op.Symbol == o.Symbol && op.Direction == o.Direction {
+			return op, true
+		}
+	}
+	return live.Opportunity{}, false
+}
+
 func (u *UI) ttlText() string {
 	if n := u.settings.ApprovalSeconds; n > 0 {
 		return fmt.Sprintf("%d s", n)
