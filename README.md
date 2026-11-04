@@ -4,11 +4,11 @@ A decision-making algorithm for public markets.
 
 You give it your situation: capital, available time, skills and risk tolerance. Then you pick one or more public markets. It evaluates the available strategies, ranks them, and returns an ordered list of actions. Each action comes with its score and the numbers behind it.
 
-**It proposes; you approve every entry.** The desktop app watches your favorite cryptos second by second, for trades lasting a few tens of seconds. When the algorithm sees an entry it notifies you, and the bot only takes it if you accept. For now it trades only on a **devnet ledger**: test SOL, valued at real prices. It never places a real order. Nothing is centralized: everything runs on your machine.
+**It proposes; you approve every entry.** The desktop app watches your favorite cryptos second by second, for trades lasting a few tens of seconds. When the algorithm sees an entry it notifies you, with the most it can gain and the most it can lose, and the bot only takes it if you accept. The bot only ever uses its own account, funded with the small amount you choose, and never puts more than your max per trade in one position. For now it trades only on a **devnet ledger**: test SOL, valued at real prices. It never places a real order. Nothing is centralized: everything runs on your machine.
 
 It comes in two forms:
 
-- **a desktop app** that watches your favorite cryptos in real time on 1-second candles. It shows the algorithm's advice in plain words and notifies every opportunity. It lets a bot take the entries you approve on devnet, and follows your Solana wallet;
+- **a desktop app** that watches your favorite cryptos in real time on 1-second candles. It shows the algorithm's advice in plain words and notifies every opportunity. It imports your Solana wallet, lets you fund a separate bot account, and lets the bot take the entries you approve on devnet. Its effort level lets it run quietly next to a game or a movie;
 - **a command-line tool** (`rar`) that runs one decision cycle at a time, which suits scripts and scheduled jobs.
 
 ![The trading screen, watching Solana](docs/screenshot.png)
@@ -115,6 +115,21 @@ The start of a word is enough (`t`, `hist`), and the line under the prompt tells
 - **Allow the bot to trade** with the switch, in devnet only. It is **off by default**. Even when it is on, every entry still waits for your approval. Turning it off stops everything immediately, stop-loss included.
 - **Settings** (gear icon): your risk tolerance, the approval window, the maximum holding time, the **max per trade** (the most the bot puts in one trade, $20 by default), and optional Solana mainnet and devnet RPC endpoints.
 
+### Test it on devnet
+
+Devnet SOL is free test money: nothing here can cost you anything.
+
+1. **Make a test wallet.** In Phantom, turn on *Testnet mode* and pick *Solana Devnet*, then create a new wallet (or run `solana-keygen new`). Keep it for testing only.
+2. **Switch the wallet card to Devnet**, then **Import your wallet**: paste its recovery phrase, check that the address shown is the one in Phantom, tick the box and choose a password.
+3. **Airdrop** test SOL to the main account. If the faucet refuses, use [faucet.solana.com](https://faucet.solana.com) with your address.
+4. **Fund bot** with a small amount, for example 0.2 SOL. The confirmation shows the amount, both addresses and the network fee. Once it is confirmed, the link opens the transaction on Solana Explorer, and the bot's ledger shows the new value.
+5. In **Settings**, set the **max per trade** (for example $5) and the **max hold** (for example 60 s).
+6. **Allow trading on devnet** with the switch.
+7. When an opportunity appears, read its **gain and loss** and its amount, then **Accept** or **Ignore**. Exits happen on their own: take-profit, stop, max hold or signal reversal.
+8. Follow the result in `historic`, then **Withdraw** what is left back to your main account.
+
+Few opportunities may appear: an entry is only offered when its expected result beats the trading costs within your max hold.
+
 ### Historic
 
 Everything the bot gained or lost, in devnet or in the demo:
@@ -180,18 +195,25 @@ Command-line options, for advanced use:
 
 ### How it runs in real time
 
-- **Every price update** refreshes the forming candle, marks the ledger to market and checks the **stop-loss** and the **max hold**.
+- **Every price update** refreshes the forming candle, marks the ledger to market and checks each position's **stop-loss**, **take-profit** and **max hold**.
 - **Every closed candle**, that is every second, recomputes the signals of the selected strategies.
   - Positions are held or closed automatically.
-  - A new entry becomes an **opportunity** that waits for your approval.
+  - A new entry gets its bracket (take-profit and stop, sized over your max hold), and becomes an **opportunity** that waits for your approval. Without an edge after costs, it is not offered.
   - Signals are never computed on a candle that is still forming, because that is not what the backtest evaluated.
-- **Every 5 minutes** the full evaluation runs again (walk-forward backtests and arbitration) on the last 2 hours of candles kept in memory. It never opens a position by itself either.
+- **Every 5 minutes** (from every minute at `max` to every 30 minutes at `low`, see *Effort*), the full evaluation runs again on the last 2 hours of candles kept in memory: walk-forward backtests and arbitration. The brackets are estimated again on the newer candles. It never opens a position by itself either.
 - **After a lost connection**, the app reconnects automatically and downloads the candles it missed.
-- **After a stop-loss or a max-hold exit**, the position is not reopened in the same direction until its signal has gone flat or reversed.
+- **After a stop-loss, take-profit or max-hold exit**, the position is not reopened in the same direction until its signal has gone flat or reversed.
 
 While the bot is not allowed to trade, the algorithm keeps evaluating, advising and notifying opportunities, but the ledger does not change at all.
 
-**About fees.** At this horizon, fees dominate. Binance's spot fee plus the configured slippage cost about 0.3 % per round trip. On 1-second candles, the two strategies of the catalogue do not beat that: the watchlist then says *no reliable strategy*, and no opportunity is raised. The algorithm has to look for moves larger than its costs.
+**About fees.** At this horizon, fees dominate. Binance's spot fee plus the configured slippage cost about 0.3 % per round trip, and both filters take it into account:
+
+- the full evaluation drops the strategies that would not have beaten it (the watchlist then says *no reliable strategy*);
+- the bracket drops the entries whose expected result within the max hold does not beat it.
+
+So the app may stay quiet for a long time. A longer max hold leaves room for larger moves.
+
+The bracket statistics describe how the market moved over your max hold. They do not yet take the strategy's signal into account.
 
 ## Command-line usage
 
@@ -304,10 +326,12 @@ The algorithm is meant to be rewritten. Add your own strategies, plug in another
 | Plug in a market | [`internal/market/`](internal/market/): implement `Market` (`Descriptor()` + `Bars()`), call `market.Register` in `init()`, and import it in [`cmd/rar`](cmd/rar/main.go) and [`cmd/rar-desktop`](cmd/rar-desktop/main.go). For real-time prices, also implement the optional `Streamer` interface. See `csvfile` and `binance` for examples. |
 | Change the live behaviour | [`internal/live/`](internal/live/engine.go) |
 | Change the interface or the theme | [`internal/gui/`](internal/gui/) |
-| Read another kind of wallet | [`internal/wallet/`](internal/wallet/solana.go) |
+| Read another kind of wallet, import or transfers | [`internal/wallet/`](internal/wallet/): [`solana.go`](internal/wallet/solana.go), [`import.go`](internal/wallet/import.go), [`vault.go`](internal/wallet/vault.go), [`transfer.go`](internal/wallet/transfer.go) |
 | Change what the score maximizes | [`internal/eval/`](internal/eval/eval.go) |
 | Swap the allocation rule | [`internal/arbiter/`](internal/arbiter/arbiter.go) |
 | Change exit conditions | [`internal/loop/`](internal/loop/loop.go) |
+| Change how take-profit and stop are sized | [`internal/risk/`](internal/risk/risk.go) |
+| Change the effort levels | [`internal/live/effort.go`](internal/live/effort.go) |
 
 Before proposing a change, run the checks:
 
